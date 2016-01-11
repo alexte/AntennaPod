@@ -138,9 +138,9 @@ public class ChapterListAdapter extends ArrayAdapter<Chapter> {
 		if (current != null) {
 			if (current == sc) {
 				holder.title.setTextColor(convertView.getResources().getColor(
-						R.color.bright_blue));
+						R.color.holo_blue_light));
                 holder.start.setTextColor(convertView.getResources().getColor(
-                        R.color.bright_blue));
+                        R.color.holo_blue_light));
 			} else {
 				holder.title.setTextColor(defaultTextColor);
                 holder.start.setTextColor(defaultTextColor);
@@ -163,9 +163,11 @@ public class ChapterListAdapter extends ArrayAdapter<Chapter> {
 	public int getCount() {
 		// ignore invalid chapters
 		int counter = 0;
-		for (Chapter chapter : chapters) {
-			if (!ignoreChapter(chapter)) {
-				counter++;
+		if (chapters != null) {
+			for (Chapter chapter : chapters) {
+				if (!ignoreChapter(chapter)) {
+					counter++;
+				}
 			}
 		}
 		return counter;

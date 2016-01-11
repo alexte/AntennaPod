@@ -1,6 +1,7 @@
 package de.danoeh.antennapod.fragment;
 
 import android.content.Intent;
+import android.content.res.Resources;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.v4.app.Fragment;
@@ -21,15 +22,17 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.List;
 
 import de.danoeh.antennapod.R;
-import de.danoeh.antennapod.activity.DefaultOnlineFeedViewActivity;
 import de.danoeh.antennapod.activity.OnlineFeedViewActivity;
 import de.danoeh.antennapod.adapter.itunes.ItunesAdapter;
+import de.danoeh.antennapod.core.preferences.UserPreferences;
 
-import static de.danoeh.antennapod.adapter.itunes.ItunesAdapter.*;
+import static de.danoeh.antennapod.adapter.itunes.ItunesAdapter.Podcast;
 
 //Searches iTunes store for given string and displays results in a list
 public class ItunesSearchFragment extends Fragment {
@@ -92,13 +95,13 @@ public class ItunesSearchFragment extends Fragment {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 Intent intent = new Intent(getActivity(),
-                        DefaultOnlineFeedViewActivity.class);
+                        OnlineFeedViewActivity.class);
 
                 //Tell the OnlineFeedViewActivity where to go
                 String url = searchResults.get(position).feedUrl;
                 intent.putExtra(OnlineFeedViewActivity.ARG_FEEDURL, url);
 
-                intent.putExtra(DefaultOnlineFeedViewActivity.ARG_TITLE, "iTunes");
+                intent.putExtra(OnlineFeedViewActivity.ARG_TITLE, "iTunes");
                 startActivity(intent);
             }
         });
@@ -123,6 +126,13 @@ public class ItunesSearchFragment extends Fragment {
                 return false;
             }
         });
+
+        SearchView.SearchAutoComplete textField = (SearchView.SearchAutoComplete) searchView.findViewById(de.danoeh.antennapod.R.id.search_src_text);
+        if(UserPreferences.getTheme() == de.danoeh.antennapod.R.style.Theme_AntennaPod_Dark) {
+            textField.setTextColor(Resources.getSystem().getColor(android.R.color.white));
+        } else {
+            textField.setTextColor(Resources.getSystem().getColor(android.R.color.black));
+        }
 
         return view;
     }
@@ -151,8 +161,18 @@ public class ItunesSearchFragment extends Fragment {
          *
          * @param query Search string
          */
-        public SearchTask(String query){
-            this.query = query;
+        public SearchTask(String query) {
+            String encodedQuery = null;
+            try {
+                encodedQuery = URLEncoder.encode(query, "UTF-8");
+            } catch(UnsupportedEncodingException e) {
+                // this won't ever be thrown
+            }
+            if(encodedQuery != null) {
+                this.query = encodedQuery;
+            } else {
+                this.query = query; // failsafe
+            }
         }
 
         //Get the podcast data

@@ -10,7 +10,6 @@ import android.widget.Button;
 import android.widget.EditText;
 
 import de.danoeh.antennapod.R;
-import de.danoeh.antennapod.activity.DefaultOnlineFeedViewActivity;
 import de.danoeh.antennapod.activity.MainActivity;
 import de.danoeh.antennapod.activity.OnlineFeedViewActivity;
 import de.danoeh.antennapod.activity.OpmlImportFromPathActivity;
@@ -20,7 +19,8 @@ import de.danoeh.antennapod.fragment.gpodnet.GpodnetMainFragment;
  * Provides actions for adding new podcast subscriptions
  */
 public class AddFeedFragment extends Fragment {
-    private static final String TAG = "AddFeedFragment";
+
+    public static final String TAG = "AddFeedFragment";
 
     /**
      * Preset value for url text field.
@@ -72,7 +72,7 @@ public class AddFeedFragment extends Fragment {
         butConfirm.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Intent intent = new Intent(getActivity(), DefaultOnlineFeedViewActivity.class);
+                Intent intent = new Intent(getActivity(), OnlineFeedViewActivity.class);
                 intent.putExtra(OnlineFeedViewActivity.ARG_FEEDURL, etxtFeedurl.getText().toString());
                 intent.putExtra(OnlineFeedViewActivity.ARG_TITLE, getString(R.string.add_feed_label));
                 startActivity(intent);

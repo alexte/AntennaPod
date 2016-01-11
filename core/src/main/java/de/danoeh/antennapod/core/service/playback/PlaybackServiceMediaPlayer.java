@@ -1,22 +1,31 @@
 package de.danoeh.antennapod.core.service.playback;
 
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.media.AudioManager;
-import android.media.RemoteControlClient;
 import android.net.wifi.WifiManager;
 import android.os.PowerManager;
+import android.preference.PreferenceManager;
+import android.support.annotation.NonNull;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 import android.telephony.TelephonyManager;
 import android.util.Log;
 import android.util.Pair;
+import android.view.InputDevice;
+import android.view.KeyEvent;
 import android.view.SurfaceHolder;
 
-import org.apache.commons.lang3.Validate;
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.request.target.Target;
 
 import java.io.IOException;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -24,11 +33,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
-import de.danoeh.antennapod.core.BuildConfig;
 import de.danoeh.antennapod.core.feed.Chapter;
+import de.danoeh.antennapod.core.feed.FeedItem;
+import de.danoeh.antennapod.core.feed.FeedMedia;
 import de.danoeh.antennapod.core.feed.MediaType;
+import de.danoeh.antennapod.core.glide.ApGlideSettings;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
-import de.danoeh.antennapod.core.receiver.MediaButtonReceiver;
+import de.danoeh.antennapod.core.storage.DBWriter;
+import de.danoeh.antennapod.core.util.RewindAfterPauseUtils;
 import de.danoeh.antennapod.core.util.playback.AudioPlayer;
 import de.danoeh.antennapod.core.util.playback.IPlayer;
 import de.danoeh.antennapod.core.util.playback.Playable;
@@ -37,8 +49,8 @@ import de.danoeh.antennapod.core.util.playback.VideoPlayer;
 /**
  * Manages the MediaPlayer object of the PlaybackService.
  */
-public class PlaybackServiceMediaPlayer {
-    public static final String TAG = "PlaybackServiceMediaPlayer";
+public class PlaybackServiceMediaPlayer implements SharedPreferences.OnSharedPreferenceChangeListener {
+    public static final String TAG = "PlaybackSvcMediaPlayer";
 
     /**
      * Return value of some PSMP methods if the method call failed.
@@ -67,6 +79,7 @@ public class PlaybackServiceMediaPlayer {
      * have to wait until these operations have finished.
      */
     private final ReentrantLock playerLock;
+    private CountDownLatch seekLatch;
 
     private final PSMPCallback callback;
     private final Context context;
@@ -78,10 +91,8 @@ public class PlaybackServiceMediaPlayer {
      */
     private WifiManager.WifiLock wifiLock;
 
-    public PlaybackServiceMediaPlayer(Context context, PSMPCallback callback) {
-        Validate.notNull(context);
-        Validate.notNull(callback);
-
+    public PlaybackServiceMediaPlayer(@NonNull Context context,
+                                      @NonNull PSMPCallback callback) {
         this.context = context;
         this.callback = callback;
         this.audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
@@ -91,14 +102,31 @@ public class PlaybackServiceMediaPlayer {
                 new RejectedExecutionHandler() {
                     @Override
                     public void rejectedExecution(Runnable r, ThreadPoolExecutor executor) {
-                        if (BuildConfig.DEBUG) Log.d(TAG, "Rejected execution of runnable");
+                        Log.d(TAG, "Rejected execution of runnable");
                     }
                 }
         );
 
-        mediaSession = new MediaSessionCompat(context, TAG);
-        mediaSession.setCallback(sessionCallback);
-        mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        MediaButtonIntentReceiver.setMediaPlayer(this);
+        ComponentName eventReceiver = new ComponentName(context.getPackageName(), MediaButtonIntentReceiver.class.getName());
+        Intent mediaButtonIntent = new Intent(Intent.ACTION_MEDIA_BUTTON);
+        mediaButtonIntent.setComponent(eventReceiver);
+        PendingIntent buttonReceiverIntent = PendingIntent.getBroadcast(context, 0, mediaButtonIntent, PendingIntent.FLAG_UPDATE_CURRENT);
+
+        mediaSession = new MediaSessionCompat(context, TAG, eventReceiver, buttonReceiverIntent);
+
+        try {
+            mediaSession.setCallback(sessionCallback);
+            mediaSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+            mediaSession.setActive(true);
+        } catch (NullPointerException npe) {
+            // on some devices (Huawei) setting active can cause a NullPointerException
+            // even with correct use of the api.
+            // See http://stackoverflow.com/questions/31556679/android-huawei-mediassessioncompat
+            // and https://plus.google.com/+IanLake/posts/YgdTkKFxz7d
+            Log.e(TAG, "NullPointerException while setting up MediaSession");
+            npe.printStackTrace();
+        }
 
         mediaPlayer = null;
         statusBeforeSeeking = null;
@@ -106,6 +134,16 @@ public class PlaybackServiceMediaPlayer {
         mediaType = MediaType.UNKNOWN;
         playerStatus = PlayerStatus.STOPPED;
         videoSize = null;
+
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        prefs.registerOnSharedPreferenceChangeListener(this);
+    }
+
+    @Override
+    public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+        if(key.equals(UserPreferences.PREF_LOCKSCREEN_BACKGROUND)) {
+            updateMediaSessionMetadata();
+        }
     }
 
     /**
@@ -134,10 +172,8 @@ public class PlaybackServiceMediaPlayer {
      *                           for playback immediately (see 'prepareImmediately' parameter for more details)
      * @param prepareImmediately Set to true if the method should also prepare the episode for playback.
      */
-    public void playMediaObject(final Playable playable, final boolean stream, final boolean startWhenPrepared, final boolean prepareImmediately) {
-        Validate.notNull(playable);
-
-        if (BuildConfig.DEBUG) Log.d(TAG, "Play media object.");
+    public void playMediaObject(@NonNull final Playable playable, final boolean stream, final boolean startWhenPrepared, final boolean prepareImmediately) {
+        Log.d(TAG, "playMediaObject(...)");
         executor.submit(new Runnable() {
             @Override
             public void run() {
@@ -162,18 +198,17 @@ public class PlaybackServiceMediaPlayer {
      *
      * @see #playMediaObject(de.danoeh.antennapod.core.util.playback.Playable, boolean, boolean, boolean)
      */
-    private void playMediaObject(final Playable playable, final boolean forceReset, final boolean stream, final boolean startWhenPrepared, final boolean prepareImmediately) {
-        Validate.notNull(playable);
-        if (!playerLock.isHeldByCurrentThread())
+    private void playMediaObject(@NonNull final Playable playable, final boolean forceReset, final boolean stream, final boolean startWhenPrepared, final boolean prepareImmediately) {
+        if (!playerLock.isHeldByCurrentThread()) {
             throw new IllegalStateException("method requires playerLock");
+        }
 
 
         if (media != null) {
             if (!forceReset && media.getIdentifier().equals(playable.getIdentifier())
                     && playerStatus == PlayerStatus.PLAYING) {
                 // episode is already playing -> ignore method call
-                if (BuildConfig.DEBUG)
-                    Log.d(TAG, "Method call to playMediaObject was ignored: media file already playing.");
+                Log.d(TAG, "Method call to playMediaObject was ignored: media file already playing.");
                 return;
             } else {
                 // stop playback of this episode
@@ -184,6 +219,23 @@ public class PlaybackServiceMediaPlayer {
                 if (playerStatus == PlayerStatus.PLAYING) {
                     setPlayerStatus(PlayerStatus.PAUSED, media);
                 }
+
+                // smart mark as played
+                if(media != null && media instanceof FeedMedia) {
+                    FeedMedia oldMedia = (FeedMedia) media;
+                    if(oldMedia.hasAlmostEnded()) {
+                        Log.d(TAG, "smart mark as read");
+                        FeedItem item = oldMedia.getItem();
+                        DBWriter.markItemPlayed(item, FeedItem.PLAYED, false);
+                        DBWriter.removeQueueItem(context, item, false);
+                        DBWriter.addItemToPlaybackHistory(oldMedia);
+                        if (item.getFeed().getPreferences().getCurrentAutoDelete()) {
+                            Log.d(TAG, "Delete " + oldMedia.toString());
+                            DBWriter.deleteFeedMediaOfItem(context, oldMedia.getId());
+                        }
+                    }
+                }
+
                 setPlayerStatus(PlayerStatus.INDETERMINATE, null);
             }
         }
@@ -197,7 +249,7 @@ public class PlaybackServiceMediaPlayer {
         setPlayerStatus(PlayerStatus.INITIALIZING, media);
         try {
             media.loadMetadata();
-            mediaSession.setMetadata(getMediaSessionMetadata(media));
+            updateMediaSessionMetadata();
             if (stream) {
                 mediaPlayer.setDataSource(media.getStreamUrl());
             } else {
@@ -228,11 +280,36 @@ public class PlaybackServiceMediaPlayer {
         }
     }
 
-    private MediaMetadataCompat getMediaSessionMetadata(Playable p) {
-        MediaMetadataCompat.Builder builder = new MediaMetadataCompat.Builder();
-        builder.putString(MediaMetadataCompat.METADATA_KEY_TITLE, p.getEpisodeTitle());
-        builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM, p.getFeedTitle());
-        return builder.build();
+    private void updateMediaSessionMetadata() {
+        executor.execute(() -> {
+            final Playable p = this.media;
+            if (p == null) {
+                return;
+            }
+            MediaMetadataCompat.Builder builder = new MediaMetadataCompat.Builder();
+            builder.putString(MediaMetadataCompat.METADATA_KEY_ARTIST, p.getFeedTitle());
+            builder.putString(MediaMetadataCompat.METADATA_KEY_TITLE, p.getEpisodeTitle());
+            builder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, p.getDuration());
+            builder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, p.getEpisodeTitle());
+            builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM, p.getFeedTitle());
+            if (p.getImageUri() != null) {
+                if (UserPreferences.setLockscreenBackground()) {
+                    builder.putString(MediaMetadataCompat.METADATA_KEY_ART_URI, p.getImageUri().toString());
+                    try {
+                        Bitmap art = Glide.with(context)
+                            .load(p.getImageUri())
+                            .asBitmap()
+                            .diskCacheStrategy(ApGlideSettings.AP_DISK_CACHE_STRATEGY)
+                            .into(Target.SIZE_ORIGINAL, Target.SIZE_ORIGINAL)
+                            .get();
+                        builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, art);
+                    } catch (Exception e) {
+                        Log.e(TAG, Log.getStackTraceString(e));
+                    }
+                }
+            }
+            mediaSession.setMetadata(builder.build());
+        });
     }
 
 
@@ -261,31 +338,24 @@ public class PlaybackServiceMediaPlayer {
             if (focusGained == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                 acquireWifiLockIfNecessary();
                 setSpeed(Float.parseFloat(UserPreferences.getPlaybackSpeed()));
-                mediaPlayer.start();
+
                 if (playerStatus == PlayerStatus.PREPARED && media.getPosition() > 0) {
-                    mediaPlayer.seekTo(media.getPosition());
+                    int newPosition = RewindAfterPauseUtils.calculatePositionWithRewind(
+                        media.getPosition(),
+                        media.getLastPlayedTime());
+                    seekToSync(newPosition);
                 }
+                mediaPlayer.start();
 
                 setPlayerStatus(PlayerStatus.PLAYING, media);
                 pausedBecauseOfTransientAudiofocusLoss = false;
-                if (android.os.Build.VERSION.SDK_INT >= 14) {
-                    RemoteControlClient remoteControlClient = callback.getRemoteControlClient();
-                    if (remoteControlClient != null) {
-                        audioManager
-                                .registerRemoteControlClient(remoteControlClient);
-                    }
-                }
-                audioManager
-                        .registerMediaButtonEventReceiver(new ComponentName(context.getPackageName(),
-                                MediaButtonReceiver.class.getName()));
                 media.onPlaybackStart();
 
             } else {
-                if (BuildConfig.DEBUG) Log.e(TAG, "Failed to request audio focus");
+                Log.e(TAG, "Failed to request audio focus");
             }
         } else {
-            if (BuildConfig.DEBUG)
-                Log.d(TAG, "Call to resume() was ignored because current state of PSMP object is " + playerStatus);
+            Log.d(TAG, "Call to resume() was ignored because current state of PSMP object is " + playerStatus);
         }
     }
 
@@ -307,8 +377,7 @@ public class PlaybackServiceMediaPlayer {
                 playerLock.lock();
                 releaseWifiLockIfNecessary();
                 if (playerStatus == PlayerStatus.PLAYING) {
-                    if (BuildConfig.DEBUG)
-                        Log.d(TAG, "Pausing playback.");
+                    Log.d(TAG, "Pausing playback.");
                     mediaPlayer.pause();
                     setPlayerStatus(PlayerStatus.PAUSED, media);
 
@@ -320,8 +389,7 @@ public class PlaybackServiceMediaPlayer {
                         reinit();
                     }
                 } else {
-                    if (BuildConfig.DEBUG)
-                        Log.d(TAG, "Ignoring call to pause: Player is in " + playerStatus + " state");
+                    Log.d(TAG, "Ignoring call to pause: Player is in " + playerStatus + " state");
                 }
 
                 playerLock.unlock();
@@ -342,8 +410,7 @@ public class PlaybackServiceMediaPlayer {
                 playerLock.lock();
 
                 if (playerStatus == PlayerStatus.INITIALIZED) {
-                    if (BuildConfig.DEBUG)
-                        Log.d(TAG, "Preparing media player");
+                    Log.d(TAG, "Preparing media player");
                     setPlayerStatus(PlayerStatus.PREPARING, media);
                     try {
                         mediaPlayer.prepare();
@@ -370,8 +437,7 @@ public class PlaybackServiceMediaPlayer {
             throw new IllegalStateException("Player is not in PREPARING state");
         }
 
-        if (BuildConfig.DEBUG)
-            Log.d(TAG, "Resource prepared");
+        Log.d(TAG, "Resource prepared");
 
         if (mediaType == MediaType.VIDEO) {
             VideoPlayer vp = (VideoPlayer) mediaPlayer;
@@ -379,12 +445,11 @@ public class PlaybackServiceMediaPlayer {
         }
 
         if (media.getPosition() > 0) {
-            mediaPlayer.seekTo(media.getPosition());
+            seekToSync(media.getPosition());
         }
 
         if (media.getDuration() == 0) {
-            if (BuildConfig.DEBUG)
-                Log.d(TAG, "Setting duration of media");
+            Log.d(TAG, "Setting duration of media");
             media.setDuration(mediaPlayer.getDuration());
         }
         setPlayerStatus(PlayerStatus.PREPARED, media);
@@ -412,8 +477,7 @@ public class PlaybackServiceMediaPlayer {
                 } else if (mediaPlayer != null) {
                     mediaPlayer.reset();
                 } else {
-                    if (BuildConfig.DEBUG)
-                        Log.d(TAG, "Call to reinit was ignored: media and mediaPlayer were null");
+                    Log.d(TAG, "Call to reinit was ignored: media and mediaPlayer were null");
                 }
                 playerLock.unlock();
             }
@@ -437,15 +501,27 @@ public class PlaybackServiceMediaPlayer {
         if (playerStatus == PlayerStatus.PLAYING
                 || playerStatus == PlayerStatus.PAUSED
                 || playerStatus == PlayerStatus.PREPARED) {
-            if (stream) {
-                //    statusBeforeSeeking = playerStatus;
-                //    setPlayerStatus(PlayerStatus.SEEKING, media);
+            if (!stream) {
+                statusBeforeSeeking = playerStatus;
+                setPlayerStatus(PlayerStatus.SEEKING, media);
             }
+            if(seekLatch != null && seekLatch.getCount() > 0) {
+                try {
+                    seekLatch.await(3, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Log.e(TAG, Log.getStackTraceString(e));
+                }
+            }
+            seekLatch = new CountDownLatch(1);
             mediaPlayer.seekTo(t);
-
+            try {
+                seekLatch.await(3, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Log.e(TAG, Log.getStackTraceString(e));
+            }
         } else if (playerStatus == PlayerStatus.INITIALIZED) {
             media.setPosition(t);
-            startWhenPrepared.set(true);
+            startWhenPrepared.set(false);
             prepare();
         }
         playerLock.unlock();
@@ -491,9 +567,7 @@ public class PlaybackServiceMediaPlayer {
     /**
      * Seek to the start of the specified chapter.
      */
-    public void seekToChapter(Chapter c) {
-        Validate.notNull(c);
-
+    public void seekToChapter(@NonNull Chapter c) {
         seekTo((int) c.getStart());
     }
 
@@ -529,13 +603,18 @@ public class PlaybackServiceMediaPlayer {
         int retVal = INVALID_TIME;
         if (playerStatus == PlayerStatus.PLAYING
                 || playerStatus == PlayerStatus.PAUSED
-                || playerStatus == PlayerStatus.PREPARED) {
+                || playerStatus == PlayerStatus.PREPARED
+                || playerStatus == PlayerStatus.SEEKING) {
             retVal = mediaPlayer.getCurrentPosition();
+            if(retVal <= 0 && media != null && media.getPosition() > 0) {
+                retVal = media.getPosition();
+            }
         } else if (media != null && media.getPosition() > 0) {
             retVal = media.getPosition();
         }
 
         playerLock.unlock();
+        Log.d(TAG, "getPosition() -> " + retVal);
         return retVal;
     }
 
@@ -567,8 +646,7 @@ public class PlaybackServiceMediaPlayer {
         if (media != null && media.getMediaType() == MediaType.AUDIO) {
             if (mediaPlayer.canSetSpeed()) {
                 mediaPlayer.setPlaybackSpeed((float) speed);
-                if (BuildConfig.DEBUG)
-                    Log.d(TAG, "Playback speed was set to " + speed);
+                Log.d(TAG, "Playback speed was set to " + speed);
                 callback.playbackSpeedChanged(speed);
             }
         }
@@ -606,12 +684,34 @@ public class PlaybackServiceMediaPlayer {
         return retVal;
     }
 
-    public MediaType getCurrentMediaType() {
-        return mediaType;
+    /**
+     * Sets the playback speed.
+     * This method is executed on an internal executor service.
+     */
+    public void setVolume(final float volume) {
+        executor.submit(new Runnable() {
+            @Override
+            public void run() {
+                setVolumeSync(volume);
+            }
+        });
     }
 
-    public PlayerStatus getPlayerStatus() {
-        return playerStatus;
+    /**
+     * Sets the playback speed.
+     * This method is executed on the caller's thread.
+     */
+    private void setVolumeSync(float volume) {
+        playerLock.lock();
+        if (media != null && media.getMediaType() == MediaType.AUDIO) {
+            mediaPlayer.setVolume(volume, volume);
+            Log.d(TAG, "Media player volume was set to " + volume);
+        }
+        playerLock.unlock();
+    }
+
+    public MediaType getCurrentMediaType() {
+        return mediaType;
     }
 
     public boolean isStreaming() {
@@ -651,8 +751,7 @@ public class PlaybackServiceMediaPlayer {
             @Override
             public void run() {
                 playerLock.lock();
-                if (BuildConfig.DEBUG)
-                    Log.d(TAG, "Resetting video surface");
+                Log.d(TAG, "Resetting video surface");
                 mediaPlayer.setDisplay(null);
                 reinit();
                 playerLock.unlock();
@@ -694,6 +793,26 @@ public class PlaybackServiceMediaPlayer {
     }
 
     /**
+     * Returns the current status, if you need the media and the player status together, you should
+     * use getPSMPInfo() to make sure they're properly synchronized. Otherwise a race condition
+     * could result in nonsensical results (like a status of PLAYING, but a null playable)
+     * @return the current player status
+     */
+    public PlayerStatus getPlayerStatus() {
+        return playerStatus;
+    }
+
+    /**
+     * Returns the current media, if you need the media and the player status together, you should
+     * use getPSMPInfo() to make sure they're properly synchronized. Otherwise a race condition
+     * could result in nonsensical results (like a status of PLAYING, but a null playable)
+     * @return the current media. May be null
+     */
+    public Playable getPlayable() {
+        return media;
+    }
+
+    /**
      * Returns a token to this object's MediaSession. The MediaSession should only be used for notifications
      * at the moment.
      *
@@ -713,10 +832,8 @@ public class PlaybackServiceMediaPlayer {
      * @param newStatus The new PlayerStatus. This must not be null.
      * @param newMedia  The new playable object of the PSMP object. This can be null.
      */
-    private synchronized void setPlayerStatus(PlayerStatus newStatus, Playable newMedia) {
-        Validate.notNull(newStatus);
-
-        if (BuildConfig.DEBUG) Log.d(TAG, "Setting player status to " + newStatus);
+    private synchronized void setPlayerStatus(@NonNull PlayerStatus newStatus, Playable newMedia) {
+        Log.d(TAG, "Setting player status to " + newStatus);
 
         this.playerStatus = newStatus;
         this.media = newMedia;
@@ -725,6 +842,7 @@ public class PlaybackServiceMediaPlayer {
 
         int state;
         if (playerStatus != null) {
+            Log.d(TAG, "playerStatus: " + playerStatus.toString());
             switch (playerStatus) {
                 case PLAYING:
                     state = PlaybackStateCompat.STATE_PLAYING;
@@ -757,7 +875,12 @@ public class PlaybackServiceMediaPlayer {
         } else {
             state = PlaybackStateCompat.STATE_NONE;
         }
-        sessionState.setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, getPlaybackSpeed());
+        sessionState.setState(state, getPosition(), getPlaybackSpeed());
+        sessionState.setActions(PlaybackStateCompat.ACTION_PLAY_PAUSE
+                | PlaybackStateCompat.ACTION_REWIND
+                | PlaybackStateCompat.ACTION_FAST_FORWARD
+                | PlaybackStateCompat.ACTION_SKIP_TO_NEXT);
+        mediaSession.setPlaybackState(sessionState.build());
 
         callback.statusChanged(new PSMPInfo(playerStatus, media));
     }
@@ -788,17 +911,15 @@ public class PlaybackServiceMediaPlayer {
                     // If there is an incoming call, playback should be paused permanently
                     TelephonyManager tm = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
                     final int callState = (tm != null) ? tm.getCallState() : 0;
-                    if (BuildConfig.DEBUG) Log.d(TAG, "Call state: " + callState);
                     Log.i(TAG, "Call state:" + callState);
 
-                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS || callState != TelephonyManager.CALL_STATE_IDLE) {
-                        if (BuildConfig.DEBUG)
-                            Log.d(TAG, "Lost audio focus");
+                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
+                            (!UserPreferences.shouldResumeAfterCall() && callState != TelephonyManager.CALL_STATE_IDLE)) {
+                        Log.d(TAG, "Lost audio focus");
                         pause(true, false);
                         callback.shouldStop();
                     } else if (focusChange == AudioManager.AUDIOFOCUS_GAIN) {
-                        if (BuildConfig.DEBUG)
-                            Log.d(TAG, "Gained audio focus");
+                        Log.d(TAG, "Gained audio focus");
                         if (pausedBecauseOfTransientAudiofocusLoss) { // we paused => play now
                             resume();
                         } else { // we ducked => raise audio level back
@@ -808,22 +929,19 @@ public class PlaybackServiceMediaPlayer {
                     } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) {
                         if (playerStatus == PlayerStatus.PLAYING) {
                             if (!UserPreferences.shouldPauseForFocusLoss()) {
-                                if (BuildConfig.DEBUG)
-                                    Log.d(TAG, "Lost audio focus temporarily. Ducking...");
+                                Log.d(TAG, "Lost audio focus temporarily. Ducking...");
                                 audioManager.adjustStreamVolume(AudioManager.STREAM_MUSIC,
                                         AudioManager.ADJUST_LOWER, 0);
                                 pausedBecauseOfTransientAudiofocusLoss = false;
                             } else {
-                                if (BuildConfig.DEBUG)
-                                    Log.d(TAG, "Lost audio focus temporarily. Could duck, but won't, pausing...");
+                                Log.d(TAG, "Lost audio focus temporarily. Could duck, but won't, pausing...");
                                 pause(false, false);
                                 pausedBecauseOfTransientAudiofocusLoss = true;
                             }
                         }
                     } else if (focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
                         if (playerStatus == PlayerStatus.PLAYING) {
-                            if (BuildConfig.DEBUG)
-                                Log.d(TAG, "Lost audio focus temporarily. Pausing...");
+                            Log.d(TAG, "Lost audio focus temporarily. Pausing...");
                             pause(false, false);
                             pausedBecauseOfTransientAudiofocusLoss = true;
                         }
@@ -835,25 +953,22 @@ public class PlaybackServiceMediaPlayer {
     };
 
 
-    public void endPlayback() {
-        executor.submit(new Runnable() {
-            @Override
-            public void run() {
-                playerLock.lock();
-                releaseWifiLockIfNecessary();
+    public void endPlayback(final boolean wasSkipped) {
+        executor.submit(() -> {
+            playerLock.lock();
+            releaseWifiLockIfNecessary();
 
-                if (playerStatus != PlayerStatus.INDETERMINATE) {
-                    setPlayerStatus(PlayerStatus.INDETERMINATE, media);
-                }
-                if (mediaPlayer != null) {
-                    mediaPlayer.reset();
-
-                }
-                audioManager.abandonAudioFocus(audioFocusChangeListener);
-                callback.endPlayback(true);
-
-                playerLock.unlock();
+            if (playerStatus != PlayerStatus.INDETERMINATE) {
+                setPlayerStatus(PlayerStatus.INDETERMINATE, media);
             }
+            if (mediaPlayer != null) {
+                mediaPlayer.reset();
+
+            }
+            audioManager.abandonAudioFocus(audioFocusChangeListener);
+            callback.endPlayback(true, wasSkipped);
+
+            playerLock.unlock();
         });
     }
 
@@ -873,8 +988,7 @@ public class PlaybackServiceMediaPlayer {
                 if (playerStatus == PlayerStatus.INDETERMINATE) {
                     setPlayerStatus(PlayerStatus.STOPPED, null);
                 } else {
-                    if (BuildConfig.DEBUG)
-                        Log.d(TAG, "Ignored call to stop: Current player state is: " + playerStatus);
+                    Log.d(TAG, "Ignored call to stop: Current player state is: " + playerStatus);
                 }
                 playerLock.unlock();
 
@@ -912,22 +1026,20 @@ public class PlaybackServiceMediaPlayer {
         }
     }
 
-    public static interface PSMPCallback {
-        public void statusChanged(PSMPInfo newInfo);
+    public interface PSMPCallback {
+        void statusChanged(PSMPInfo newInfo);
 
-        public void shouldStop();
+        void shouldStop();
 
-        public void playbackSpeedChanged(float s);
+        void playbackSpeedChanged(float s);
 
-        public void onBufferingUpdate(int percent);
+        void onBufferingUpdate(int percent);
 
-        public boolean onMediaPlayerInfo(int code);
+        boolean onMediaPlayerInfo(int code);
 
-        public boolean onMediaPlayerError(Object inObj, int what, int extra);
+        boolean onMediaPlayerError(Object inObj, int what, int extra);
 
-        public boolean endPlayback(boolean playNextEpisode);
-
-        public RemoteControlClient getRemoteControlClient();
+        boolean endPlayback(boolean playNextEpisode, boolean wasSkipped);
     }
 
     private IPlayer setMediaPlayerListeners(IPlayer mp) {
@@ -955,9 +1067,9 @@ public class PlaybackServiceMediaPlayer {
         return mp;
     }
 
-    private final com.aocate.media.MediaPlayer.OnCompletionListener audioCompletionListener = new com.aocate.media.MediaPlayer.OnCompletionListener() {
+    private final org.antennapod.audio.MediaPlayer.OnCompletionListener audioCompletionListener = new org.antennapod.audio.MediaPlayer.OnCompletionListener() {
         @Override
-        public void onCompletion(com.aocate.media.MediaPlayer mp) {
+        public void onCompletion(org.antennapod.audio.MediaPlayer mp) {
             genericOnCompletion();
         }
     };
@@ -970,12 +1082,12 @@ public class PlaybackServiceMediaPlayer {
     };
 
     private void genericOnCompletion() {
-        endPlayback();
+        endPlayback(false);
     }
 
-    private final com.aocate.media.MediaPlayer.OnBufferingUpdateListener audioBufferingUpdateListener = new com.aocate.media.MediaPlayer.OnBufferingUpdateListener() {
+    private final org.antennapod.audio.MediaPlayer.OnBufferingUpdateListener audioBufferingUpdateListener = new org.antennapod.audio.MediaPlayer.OnBufferingUpdateListener() {
         @Override
-        public void onBufferingUpdate(com.aocate.media.MediaPlayer mp,
+        public void onBufferingUpdate(org.antennapod.audio.MediaPlayer mp,
                                       int percent) {
             genericOnBufferingUpdate(percent);
         }
@@ -992,9 +1104,9 @@ public class PlaybackServiceMediaPlayer {
         callback.onBufferingUpdate(percent);
     }
 
-    private final com.aocate.media.MediaPlayer.OnInfoListener audioInfoListener = new com.aocate.media.MediaPlayer.OnInfoListener() {
+    private final org.antennapod.audio.MediaPlayer.OnInfoListener audioInfoListener = new org.antennapod.audio.MediaPlayer.OnInfoListener() {
         @Override
-        public boolean onInfo(com.aocate.media.MediaPlayer mp, int what,
+        public boolean onInfo(org.antennapod.audio.MediaPlayer mp, int what,
                               int extra) {
             return genericInfoListener(what);
         }
@@ -1011,9 +1123,9 @@ public class PlaybackServiceMediaPlayer {
         return callback.onMediaPlayerInfo(what);
     }
 
-    private final com.aocate.media.MediaPlayer.OnErrorListener audioErrorListener = new com.aocate.media.MediaPlayer.OnErrorListener() {
+    private final org.antennapod.audio.MediaPlayer.OnErrorListener audioErrorListener = new org.antennapod.audio.MediaPlayer.OnErrorListener() {
         @Override
-        public boolean onError(com.aocate.media.MediaPlayer mp, int what,
+        public boolean onError(org.antennapod.audio.MediaPlayer mp, int what,
                                int extra) {
             return genericOnError(mp, what, extra);
         }
@@ -1030,9 +1142,9 @@ public class PlaybackServiceMediaPlayer {
         return callback.onMediaPlayerError(inObj, what, extra);
     }
 
-    private final com.aocate.media.MediaPlayer.OnSeekCompleteListener audioSeekCompleteListener = new com.aocate.media.MediaPlayer.OnSeekCompleteListener() {
+    private final org.antennapod.audio.MediaPlayer.OnSeekCompleteListener audioSeekCompleteListener = new org.antennapod.audio.MediaPlayer.OnSeekCompleteListener() {
         @Override
-        public void onSeekComplete(com.aocate.media.MediaPlayer mp) {
+        public void onSeekComplete(org.antennapod.audio.MediaPlayer mp) {
             genericSeekCompleteListener();
         }
     };
@@ -1045,65 +1157,116 @@ public class PlaybackServiceMediaPlayer {
     };
 
     private final void genericSeekCompleteListener() {
-        executor.submit(new Runnable() {
-            @Override
-            public void run() {
-                playerLock.lock();
-                if (playerStatus == PlayerStatus.SEEKING) {
-                    setPlayerStatus(statusBeforeSeeking, media);
-                }
-                playerLock.unlock();
+        Thread t = new Thread(() -> {
+            Log.d(TAG, "genericSeekCompleteListener");
+            if(seekLatch != null) {
+                seekLatch.countDown();
             }
+            playerLock.lock();
+            if (playerStatus == PlayerStatus.SEEKING) {
+                setPlayerStatus(statusBeforeSeeking, media);
+            }
+            playerLock.unlock();
         });
+        t.start();
     }
 
     private final MediaSessionCompat.Callback sessionCallback = new MediaSessionCompat.Callback() {
 
+        private static final String TAG = "MediaSessionCompat";
+
         @Override
-        public void onPlay() {
-            if (playerStatus == PlayerStatus.PAUSED || playerStatus == PlayerStatus.PREPARED) {
-                resume();
-            } else if (playerStatus == PlayerStatus.INITIALIZED) {
-                setStartWhenPrepared(true);
-                prepare();
+        public boolean onMediaButtonEvent(final Intent mediaButton) {
+            Log.d(TAG, "onMediaButtonEvent(" + mediaButton + ")");
+            if (mediaButton != null) {
+                KeyEvent keyEvent = (KeyEvent) mediaButton.getExtras().get(Intent.EXTRA_KEY_EVENT);
+                handleMediaKey(keyEvent);
             }
-        }
-
-        @Override
-        public void onPause() {
-            super.onPause();
-            if (playerStatus == PlayerStatus.PLAYING) {
-                pause(false, true);
-            }
-            if (UserPreferences.isPersistNotify()) {
-                pause(false, true);
-            } else {
-                pause(true, true);
-            }
-        }
-
-        @Override
-        public void onSkipToNext() {
-            super.onSkipToNext();
-            endPlayback();
-        }
-
-        @Override
-        public void onFastForward() {
-            super.onFastForward();
-            seekDelta(UserPreferences.getSeekDeltaMs());
-        }
-
-        @Override
-        public void onRewind() {
-            super.onRewind();
-            seekDelta(-UserPreferences.getSeekDeltaMs());
-        }
-
-        @Override
-        public void onSeekTo(long pos) {
-            super.onSeekTo(pos);
-            seekTo((int) pos);
+            return false;
         }
     };
+
+    public boolean handleMediaKey(KeyEvent event) {
+        Log.d(TAG, "handleMediaKey(" + event +")");
+        if (event != null
+                && event.getAction() == KeyEvent.ACTION_DOWN
+                && event.getRepeatCount() == 0) {
+            switch (event.getKeyCode()) {
+                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                case KeyEvent.KEYCODE_HEADSETHOOK: {
+                    Log.d(TAG, "Received Play/Pause event from RemoteControlClient");
+                    if (playerStatus == PlayerStatus.PAUSED || playerStatus == PlayerStatus.PREPARED) {
+                        resume();
+                    } else if (playerStatus == PlayerStatus.INITIALIZED) {
+                        setStartWhenPrepared(true);
+                        prepare();
+                    } else if (playerStatus == PlayerStatus.PLAYING) {
+                        pause(false, true);
+                        if (UserPreferences.isPersistNotify()) {
+                            pause(false, true);
+                        } else {
+                            pause(true, true);
+                        }
+                    }
+                    return true;
+                }
+                case KeyEvent.KEYCODE_MEDIA_PLAY: {
+                    Log.d(TAG, "Received Play event from RemoteControlClient");
+                    if (playerStatus == PlayerStatus.PAUSED || playerStatus == PlayerStatus.PREPARED) {
+                        resume();
+                    } else if (playerStatus == PlayerStatus.INITIALIZED) {
+                        setStartWhenPrepared(true);
+                        prepare();
+                    }
+                    return true;
+                }
+                case KeyEvent.KEYCODE_MEDIA_PAUSE: {
+                    Log.d(TAG, "Received Pause event from RemoteControlClient");
+                    if (playerStatus == PlayerStatus.PLAYING) {
+                        pause(false, true);
+                    }
+                    if (UserPreferences.isPersistNotify()) {
+                        pause(false, true);
+                    } else {
+                        pause(true, true);
+                    }
+                    return true;
+                }
+                case KeyEvent.KEYCODE_MEDIA_STOP: {
+                    Log.d(TAG, "Received Stop event from RemoteControlClient");
+                    stop();
+                    return true;
+                }
+                case KeyEvent.KEYCODE_MEDIA_PREVIOUS: {
+                    seekDelta(-UserPreferences.getRewindSecs() * 1000);
+                    return true;
+                }
+                case KeyEvent.KEYCODE_MEDIA_REWIND: {
+                    seekDelta(-UserPreferences.getRewindSecs() * 1000);
+                    return true;
+                }
+                case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD: {
+                    seekDelta(UserPreferences.getFastFowardSecs() * 1000);
+                    return true;
+                }
+                case KeyEvent.KEYCODE_MEDIA_NEXT: {
+                    if(event.getSource() == InputDevice.SOURCE_CLASS_NONE ||
+                            UserPreferences.shouldHardwareButtonSkip()) {
+                        // assume the skip command comes from a notification or the lockscreen
+                        // a >| skip button should actually skip
+                        endPlayback(true);
+                    } else {
+                        // assume skip command comes from a (bluetooth) media button
+                        // user actually wants to fast-forward
+                        seekDelta(UserPreferences.getFastFowardSecs() * 1000);
+                    }
+                    return true;
+                }
+                default:
+                    Log.d(TAG, "Unhandled key code: " + event.getKeyCode());
+                    break;
+            }
+        }
+        return false;
+    }
 }

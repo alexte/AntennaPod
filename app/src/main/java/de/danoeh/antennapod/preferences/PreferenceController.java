@@ -1,10 +1,14 @@
 package de.danoeh.antennapod.preferences;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.TimePickerDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.res.Resources;
+import android.net.Uri;
 import android.net.wifi.WifiConfiguration;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -12,19 +16,26 @@ import android.preference.CheckBoxPreference;
 import android.preference.EditTextPreference;
 import android.preference.ListPreference;
 import android.preference.Preference;
+import android.preference.PreferenceManager;
 import android.preference.PreferenceScreen;
+import android.support.v4.content.ContextCompat;
+import android.support.v7.app.AlertDialog;
 import android.text.Editable;
+import android.text.Html;
 import android.text.TextWatcher;
+import android.text.format.DateFormat;
 import android.util.Log;
 import android.widget.EditText;
 import android.widget.Toast;
+
+import com.afollestad.materialdialogs.MaterialDialog;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import de.danoeh.antennapod.BuildConfig;
+import de.danoeh.antennapod.CrashReportWriter;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.activity.AboutActivity;
 import de.danoeh.antennapod.activity.DirectoryChooserActivity;
@@ -32,12 +43,11 @@ import de.danoeh.antennapod.activity.MainActivity;
 import de.danoeh.antennapod.activity.PreferenceActivity;
 import de.danoeh.antennapod.activity.PreferenceActivityGingerbread;
 import de.danoeh.antennapod.asynctask.OpmlExportWorker;
-import de.danoeh.antennapod.core.asynctask.FlattrClickWorker;
 import de.danoeh.antennapod.core.preferences.GpodnetPreferences;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
-import de.danoeh.antennapod.core.util.flattr.FlattrStatus;
+import de.danoeh.antennapod.core.util.Converter;
+import de.danoeh.antennapod.core.util.StorageUtils;
 import de.danoeh.antennapod.core.util.flattr.FlattrUtils;
-import de.danoeh.antennapod.core.util.flattr.SimpleFlattrThing;
 import de.danoeh.antennapod.dialog.AuthenticationDialog;
 import de.danoeh.antennapod.dialog.AutoFlattrPreferenceDialog;
 import de.danoeh.antennapod.dialog.GpodnetSetHostnameDialog;
@@ -46,9 +56,11 @@ import de.danoeh.antennapod.dialog.VariableSpeedDialog;
 /**
  * Sets up a preference UI that lets the user change user preferences.
  */
-public class PreferenceController {
+
+public class PreferenceController implements SharedPreferences.OnSharedPreferenceChangeListener {
+
     private static final String TAG = "PreferenceController";
-    public static final String PREF_FLATTR_THIS_APP = "prefFlattrThisApp";
+
     public static final String PREF_FLATTR_SETTINGS = "prefFlattrSettings";
     public static final String PREF_FLATTR_AUTH = "pref_flattr_authenticate";
     public static final String PREF_FLATTR_REVOKE = "prefRevokeAccess";
@@ -70,6 +82,18 @@ public class PreferenceController {
 
     public PreferenceController(PreferenceUI ui) {
         this.ui = ui;
+        PreferenceManager.getDefaultSharedPreferences(ui.getActivity().getApplicationContext())
+            .registerOnSharedPreferenceChangeListener(this);
+    }
+
+    @Override
+    public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
+        if(key.equals(UserPreferences.PREF_SONIC)) {
+            CheckBoxPreference prefSonic = (CheckBoxPreference) ui.findPreference(UserPreferences.PREF_SONIC);
+            if(prefSonic != null) {
+                prefSonic.setChecked(sharedPreferences.getBoolean(UserPreferences.PREF_SONIC, false));
+            }
+        }
     }
 
     /**
@@ -103,23 +127,6 @@ public class PreferenceController {
                     }
             );
         }
-
-        ui.findPreference(PreferenceController.PREF_FLATTR_THIS_APP).setOnPreferenceClickListener(
-                new Preference.OnPreferenceClickListener() {
-
-                    @Override
-                    public boolean onPreferenceClick(Preference preference) {
-                        new FlattrClickWorker(activity,
-                                new SimpleFlattrThing(activity.getString(R.string.app_name),
-                                        FlattrUtils.APP_URL,
-                                        new FlattrStatus(FlattrStatus.STATUS_QUEUE)
-                                )
-                        ).executeAsync();
-
-                        return true;
-                    }
-                }
-        );
 
         ui.findPreference(PreferenceController.PREF_FLATTR_REVOKE).setOnPreferenceClickListener(
                 new Preference.OnPreferenceClickListener() {
@@ -159,21 +166,22 @@ public class PreferenceController {
                     }
                 }
         );
-
-        ui.findPreference(PreferenceController.PREF_CHOOSE_DATA_DIR).setOnPreferenceClickListener(
-                new Preference.OnPreferenceClickListener() {
-
-                    @Override
-                    public boolean onPreferenceClick(Preference preference) {
-                        activity.startActivityForResult(
-                                new Intent(activity,
-                                        DirectoryChooserActivity.class),
-                                DirectoryChooserActivity.RESULT_CODE_DIR_SELECTED
-                        );
-                        return true;
-                    }
-                }
-        );
+        ui.findPreference(PreferenceController.PREF_CHOOSE_DATA_DIR)
+                .setOnPreferenceClickListener(
+                        new Preference.OnPreferenceClickListener() {
+                            @Override
+                            public boolean onPreferenceClick(Preference preference) {
+                                if (Build.VERSION.SDK_INT >= 19) {
+                                    showChooseDataFolderDialog();
+                                } else {
+                                    Intent intent = new Intent(activity, DirectoryChooserActivity.class);
+                                    activity.startActivityForResult(intent,
+                                            DirectoryChooserActivity.RESULT_CODE_DIR_SELECTED);
+                                }
+                                return true;
+                            }
+                        }
+                );
         ui.findPreference(UserPreferences.PREF_THEME)
                 .setOnPreferenceChangeListener(
                         new Preference.OnPreferenceChangeListener() {
@@ -190,6 +198,24 @@ public class PreferenceController {
                             }
                         }
                 );
+        ui.findPreference(UserPreferences.PREF_HIDDEN_DRAWER_ITEMS)
+                .setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        showDrawerPreferencesDialog();
+                        return true;
+                    }
+                });
+
+        ui.findPreference(UserPreferences.PREF_UPDATE_INTERVAL)
+                .setOnPreferenceClickListener(new Preference.OnPreferenceClickListener() {
+                    @Override
+                    public boolean onPreferenceClick(Preference preference) {
+                        showUpdateIntervalTimePreferencesDialog();
+                        return true;
+                    }
+                });
+
         ui.findPreference(UserPreferences.PREF_ENABLE_AUTODL)
                 .setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
                     @Override
@@ -230,7 +256,7 @@ public class PreferenceController {
                                             setParallelDownloadsText(value);
                                             return true;
                                         }
-                                    } catch(NumberFormatException e) {
+                                    } catch (NumberFormatException e) {
                                         return false;
                                     }
                                 }
@@ -239,17 +265,19 @@ public class PreferenceController {
                         }
                 );
         // validate and set correct value: number of downloads between 1 and 50 (inclusive)
-        final EditText ev = ((EditTextPreference)ui.findPreference(UserPreferences.PREF_PARALLEL_DOWNLOADS)).getEditText();
+        final EditText ev = ((EditTextPreference) ui.findPreference(UserPreferences.PREF_PARALLEL_DOWNLOADS)).getEditText();
         ev.addTextChangedListener(new TextWatcher() {
             @Override
-            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
 
             @Override
-            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
 
             @Override
             public void afterTextChanged(Editable s) {
-                if(s.length() > 0) {
+                if (s.length() > 0) {
                     try {
                         int value = Integer.valueOf(s.toString());
                         if (value <= 0) {
@@ -257,7 +285,7 @@ public class PreferenceController {
                         } else if (value > 50) {
                             ev.setText("50");
                         }
-                    } catch(NumberFormatException e) {
+                    } catch (NumberFormatException e) {
                         ev.setText("6");
                     }
                     ev.setSelection(ev.getText().length());
@@ -335,17 +363,50 @@ public class PreferenceController {
 
                             @Override
                             public void onConfirmed(boolean autoFlattrEnabled, float autoFlattrValue) {
-                                UserPreferences.setAutoFlattrSettings(activity, autoFlattrEnabled, autoFlattrValue);
+                                UserPreferences.setAutoFlattrSettings(autoFlattrEnabled, autoFlattrValue);
                                 checkItemVisibility();
                             }
                         });
                 return true;
             }
         });
-        buildUpdateIntervalPreference();
+        ui.findPreference(UserPreferences.PREF_IMAGE_CACHE_SIZE)
+                .setOnPreferenceChangeListener(
+                        new Preference.OnPreferenceChangeListener() {
+                            @Override
+                            public boolean onPreferenceChange(Preference preference, Object o) {
+                                if (o instanceof String) {
+                                    int newValue = Integer.valueOf((String) o) * 1024 * 1024;
+                                    if (newValue != UserPreferences.getImageCacheSize()) {
+                                        AlertDialog.Builder dialog = new AlertDialog.Builder(ui.getActivity());
+                                        dialog.setTitle(android.R.string.dialog_alert_title);
+                                        dialog.setMessage(R.string.pref_restart_required);
+                                        dialog.setPositiveButton(android.R.string.ok, null);
+                                        dialog.show();
+                                    }
+                                    return true;
+                                }
+                                return false;
+                            }
+                        }
+                );
+        ui.findPreference("prefSendCrashReport").setOnPreferenceClickListener(preference -> {
+            Intent emailIntent = new Intent(Intent.ACTION_SEND);
+            emailIntent.setType("text/plain");
+            String to[] = { "Martin.Fietz@gmail.com" };
+            emailIntent .putExtra(Intent.EXTRA_EMAIL, to);
+            // the attachment
+            emailIntent .putExtra(Intent.EXTRA_STREAM, Uri.fromFile(CrashReportWriter.getFile()));
+            // the mail subject
+            emailIntent .putExtra(Intent.EXTRA_SUBJECT, "AntennaPod Crash Report");
+            String intentTitle = ui.getActivity().getString(R.string.send_email);
+            ui.getActivity().startActivity(Intent.createChooser(emailIntent, intentTitle));
+            return true;
+        });
+        buildEpisodeCleanupPreference();
+        buildSmartMarkAsPlayedPreference();
         buildAutodownloadSelectedNetworsPreference();
-        setSelectedNetworksEnabled(UserPreferences
-                .isEnableAutodownloadWifiFilter());
+        setSelectedNetworksEnabled(UserPreferences.isEnableAutodownloadWifiFilter());
     }
 
     public void onResume() {
@@ -356,15 +417,36 @@ public class PreferenceController {
         updateGpodnetPreferenceScreen();
     }
 
+    @SuppressLint("NewApi")
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (resultCode == DirectoryChooserActivity.RESULT_CODE_DIR_SELECTED) {
-            String dir = data
-                    .getStringExtra(DirectoryChooserActivity.RESULT_SELECTED_DIR);
-            if (BuildConfig.DEBUG)
-                Log.d(TAG, "Setting data folder");
-            UserPreferences.setDataFolder(dir);
+        if (resultCode == Activity.RESULT_OK &&
+                requestCode == DirectoryChooserActivity.RESULT_CODE_DIR_SELECTED) {
+            String dir = data.getStringExtra(DirectoryChooserActivity.RESULT_SELECTED_DIR);
+
+            File path = new File(dir);
+            String message = null;
+            final Context context= ui.getActivity().getApplicationContext();
+            if(!path.exists()) {
+                message = String.format(context.getString(R.string.folder_does_not_exist_error), dir);
+            } else if(!path.canRead()) {
+                message = String.format(context.getString(R.string.folder_not_readable_error), dir);
+            } else if(!path.canWrite()) {
+                message = String.format(context.getString(R.string.folder_not_writable_error), dir);
+            }
+
+            if(message == null) {
+                Log.d(TAG, "Setting data folder: " + dir);
+                UserPreferences.setDataFolder(dir);
+                setDataFolderText();
+            } else {
+                AlertDialog.Builder ab = new AlertDialog.Builder(ui.getActivity());
+                ab.setMessage(message);
+                ab.setPositiveButton(android.R.string.ok, null);
+                ab.show();
+            }
         }
     }
+
 
     private void updateGpodnetPreferenceScreen() {
         final boolean loggedIn = GpodnetPreferences.loggedIn();
@@ -374,12 +456,8 @@ public class PreferenceController {
         ui.findPreference(PreferenceController.PREF_GPODNET_HOSTNAME).setSummary(GpodnetPreferences.getHostname());
     }
 
-    private void buildUpdateIntervalPreference() {
+    private String[] getUpdateIntervalEntries(final String[] values) {
         final Resources res = ui.getActivity().getResources();
-
-        ListPreference pref = (ListPreference) ui.findPreference(UserPreferences.PREF_UPDATE_INTERVAL);
-        String[] values = res.getStringArray(
-                R.array.update_intervall_values);
         String[] entries = new String[values.length];
         for (int x = 0; x < values.length; x++) {
             Integer v = Integer.parseInt(values[x]);
@@ -388,19 +466,55 @@ public class PreferenceController {
                     entries[x] = res.getString(R.string.pref_update_interval_hours_manual);
                     break;
                 case 1:
-                    entries[x] = v
-                            + " "
-                            + res.getString(R.string.pref_update_interval_hours_singular);
+                    entries[x] = v + " " + res.getString(R.string.pref_update_interval_hours_singular);
                     break;
                 default:
-                    entries[x] = v + " "
-                            + res.getString(R.string.pref_update_interval_hours_plural);
+                    entries[x] = v + " " + res.getString(R.string.pref_update_interval_hours_plural);
                     break;
 
             }
         }
-        pref.setEntries(entries);
+        return entries;
+    }
 
+    private void buildEpisodeCleanupPreference() {
+        final Resources res = ui.getActivity().getResources();
+
+        ListPreference pref = (ListPreference) ui.findPreference(UserPreferences.PREF_EPISODE_CLEANUP);
+        String[] values = res.getStringArray(
+                R.array.episode_cleanup_values);
+        String[] entries = new String[values.length];
+        for (int x = 0; x < values.length; x++) {
+            int v = Integer.parseInt(values[x]);
+            if (v == UserPreferences.EPISODE_CLEANUP_QUEUE) {
+                entries[x] = res.getString(R.string.episode_cleanup_queue_removal);
+            } else if (v == UserPreferences.EPISODE_CLEANUP_NULL){
+                entries[x] = res.getString(R.string.episode_cleanup_never);
+            } else if (v == 0) {
+                entries[x] = res.getString(R.string.episode_cleanup_after_listening);
+            } else {
+                entries[x] = res.getQuantityString(R.plurals.episode_cleanup_days_after_listening, v, v);
+            }
+        }
+        pref.setEntries(entries);
+    }
+
+    private void buildSmartMarkAsPlayedPreference() {
+        final Resources res = ui.getActivity().getResources();
+
+        ListPreference pref = (ListPreference) ui.findPreference(UserPreferences.PREF_SMART_MARK_AS_PLAYED_SECS);
+        String[] values = res.getStringArray(
+                R.array.smart_mark_as_played_values);
+        String[] entries = new String[values.length];
+        for (int x = 0; x < values.length; x++) {
+            if(x == 0) {
+                entries[x] = res.getString(R.string.pref_smart_mark_as_played_disabled);
+            } else {
+                Integer v = Integer.parseInt(values[x]);
+                entries[x] = res.getQuantityString(R.plurals.time_seconds_quantified, v, v);
+            }
+        }
+        pref.setEntries(entries);
     }
 
     private void setSelectedNetworksEnabled(boolean b) {
@@ -428,8 +542,16 @@ public class PreferenceController {
 
         ui.findPreference(UserPreferences.PREF_ENABLE_AUTODL_ON_BATTERY)
                 .setEnabled(UserPreferences.isEnableAutodownload());
-    }
 
+        ui.findPreference("prefSendCrashReport").setEnabled(CrashReportWriter.getFile().exists());
+
+        if (Build.VERSION.SDK_INT >= 16) {
+            ui.findPreference(UserPreferences.PREF_SONIC).setEnabled(true);
+        } else {
+            Preference prefSonic = ui.findPreference(UserPreferences.PREF_SONIC);
+            prefSonic.setSummary("[Android 4.1+]\n" + prefSonic.getSummary());
+        }
+    }
 
     private void setParallelDownloadsText(int downloads) {
         final Resources res = ui.getActivity().getResources();
@@ -454,7 +576,7 @@ public class PreferenceController {
     }
 
     private void setDataFolderText() {
-        File f = UserPreferences.getDataFolder(ui.getActivity(), null);
+        File f = UserPreferences.getDataFolder(null);
         if (f != null) {
             ui.findPreference(PreferenceController.PREF_CHOOSE_DATA_DIR)
                     .setSummary(f.getAbsolutePath());
@@ -488,9 +610,7 @@ public class PreferenceController {
                         );
                         boolean newValue = ((CheckBoxPreference) preference)
                                 .isChecked();
-                        if (BuildConfig.DEBUG)
-                            Log.d(TAG, "Selected network " + key
-                                    + ". New state: " + newValue);
+                        Log.d(TAG, "Selected network " + key + ". New state: " + newValue);
 
                         int index = prefValuesList.indexOf(key);
                         if (index >= 0 && newValue == false) {
@@ -501,9 +621,7 @@ public class PreferenceController {
                         }
 
                         UserPreferences.setAutodownloadSelectedNetworks(
-                                activity, prefValuesList
-                                        .toArray(new String[prefValuesList
-                                                .size()])
+                                prefValuesList.toArray(new String[prefValuesList.size()])
                         );
                         return true;
                     } else {
@@ -543,14 +661,140 @@ public class PreferenceController {
         }
     }
 
+    private void showDrawerPreferencesDialog() {
+        final Context context = ui.getActivity();
+        final List<String> hiddenDrawerItems = UserPreferences.getHiddenDrawerItems();
+        final String[] navTitles = context.getResources().getStringArray(R.array.nav_drawer_titles);
+        final String[] NAV_DRAWER_TAGS = MainActivity.NAV_DRAWER_TAGS;
+        boolean[] checked = new boolean[MainActivity.NAV_DRAWER_TAGS.length];
+        for(int i=0; i < NAV_DRAWER_TAGS.length; i++) {
+            String tag = NAV_DRAWER_TAGS[i];
+            if(!hiddenDrawerItems.contains(tag)) {
+                checked[i] = true;
+            }
+        }
 
-    public static interface PreferenceUI {
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setTitle(R.string.drawer_preferences);
+        builder.setMultiChoiceItems(navTitles, checked, (dialog, which, isChecked) -> {
+            if (isChecked) {
+                hiddenDrawerItems.remove(NAV_DRAWER_TAGS[which]);
+            } else {
+                hiddenDrawerItems.add(NAV_DRAWER_TAGS[which]);
+            }
+        });
+        builder.setPositiveButton(R.string.confirm_label, new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                UserPreferences.setHiddenDrawerItems(hiddenDrawerItems);
+            }
+        });
+        builder.setNegativeButton(R.string.cancel_label, null);
+        builder.create().show();
+    }
+
+    private void showChooseDataFolderDialog() {
+        Context context = ui.getActivity();
+        String dataFolder = UserPreferences.getDataFolder(null).getAbsolutePath();
+        int selectedIndex = -1;
+        File[] mediaDirs = ContextCompat.getExternalFilesDirs(context, null);
+        String[] folders = new String[mediaDirs.length];
+        CharSequence[] choices = new CharSequence[mediaDirs.length];
+        for(int i=0; i < mediaDirs.length; i++) {
+            String path = folders[i] = mediaDirs[i].getAbsolutePath();
+            if(dataFolder.equals(path)) {
+                selectedIndex = i;
+            }
+            int index = path.indexOf("Android");
+            if(index >= 0) {
+                choices[i] = path.substring(0, index);
+            } else {
+                choices[i] = path;
+            }
+            long bytes = StorageUtils.getFreeSpaceAvailable();
+            String freeSpace = String.format(context.getString(R.string.free_space_label),
+                    Converter.byteToString(bytes));
+            choices[i] = Html.fromHtml("<html><small>" + choices[i]
+                    + " [" + freeSpace + "]" + "</small></html>");
+        }
+        MaterialDialog dialog = new MaterialDialog.Builder(ui.getActivity())
+                .title(R.string.choose_data_directory)
+                .content(R.string.choose_data_directory_message)
+                .items(choices)
+                .itemsCallbackSingleChoice(selectedIndex, (dialog1, itemView, which, text) -> {
+                    String folder = folders[which];
+                    Log.d(TAG, "data folder: " + folder);
+                    UserPreferences.setDataFolder(folder);
+                    setDataFolderText();
+                    return true;
+                })
+                .negativeText(R.string.cancel_label)
+                .cancelable(true)
+                .build();
+        dialog.show();
+    }
+
+    private void showUpdateIntervalTimePreferencesDialog() {
+        final Context context = ui.getActivity();
+
+        MaterialDialog.Builder builder = new MaterialDialog.Builder(context);
+        builder.title(R.string.pref_autoUpdateIntervallOrTime_title);
+        builder.content(R.string.pref_autoUpdateIntervallOrTime_message);
+        builder.positiveText(R.string.pref_autoUpdateIntervallOrTime_Interval);
+        builder.negativeText(R.string.pref_autoUpdateIntervallOrTime_TimeOfDay);
+        builder.neutralText(R.string.pref_autoUpdateIntervallOrTime_Disable);
+        builder.callback(new MaterialDialog.ButtonCallback() {
+            @Override
+            public void onPositive(MaterialDialog dialog) {
+                AlertDialog.Builder builder = new AlertDialog.Builder(context);
+                builder.setTitle(context.getString(R.string.pref_autoUpdateIntervallOrTime_Interval));
+                final String[] values = context.getResources().getStringArray(R.array.update_intervall_values);
+                final String[] entries = getUpdateIntervalEntries(values);
+                builder.setSingleChoiceItems(entries, -1, (dialog1, which) -> {
+                    int hours = Integer.valueOf(values[which]);
+                    UserPreferences.setUpdateInterval(hours);
+                    dialog1.dismiss();
+                });
+                builder.setNegativeButton(context.getString(R.string.cancel_label), null);
+                builder.show();
+            }
+
+            @Override
+            public void onNegative(MaterialDialog dialog) {
+                int hourOfDay = 7, minute = 0;
+                int[] updateTime = UserPreferences.getUpdateTimeOfDay();
+                if (updateTime.length == 2) {
+                    hourOfDay = updateTime[0];
+                    minute = updateTime[1];
+                }
+                TimePickerDialog timePickerDialog = new TimePickerDialog(context,
+                    (view, selectedHourOfDay, selectedMinute) -> {
+                        if (view.getTag() == null) { // onTimeSet() may get called twice!
+                            view.setTag("TAGGED");
+                            UserPreferences.setUpdateTimeOfDay(selectedHourOfDay, selectedMinute);
+                        }
+                    }, hourOfDay, minute, DateFormat.is24HourFormat(context));
+                timePickerDialog.setTitle(context.getString(R.string.pref_autoUpdateIntervallOrTime_TimeOfDay));
+                timePickerDialog.show();
+            }
+
+            @Override
+            public void onNeutral(MaterialDialog dialog) {
+                UserPreferences.setUpdateInterval(0);
+            }
+        });
+        builder.forceStacking(true);
+        builder.show();
+    }
+
+
+    public interface PreferenceUI {
 
         /**
          * Finds a preference based on its key.
          */
-        public Preference findPreference(CharSequence key);
+        Preference findPreference(CharSequence key);
 
-        public Activity getActivity();
+        Activity getActivity();
     }
 }

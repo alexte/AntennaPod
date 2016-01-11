@@ -4,7 +4,6 @@
   <string name="app_name">AntennaPod</string>
   <string name="feeds_label">Canales</string>
   <string name="podcasts_label">PODCASTS</string>
-  <string name="episodes_label">EPISODIOS</string>
   <string name="new_label">Nuevos</string>
   <string name="waiting_list_label">Lista de espera</string>
   <string name="settings_label">Ajustes</string>
@@ -42,7 +41,6 @@
   <string name="mark_all_read_label">Marcar todo como leído</string>
   <string name="show_info_label">Información del programa</string>
   <string name="share_link_label">Compartir el enlace de la web</string>
-  <string name="share_source_label">Compartir el enlace del canal</string>
   <string name="feed_delete_confirmation_msg">Confirme que quiere eliminar este canal y TODOS los episodios descargados del mismo.</string>
   <!--actions on feeditems-->
   <string name="download_label">Descargar</string>
@@ -72,7 +70,7 @@
   <string name="download_error_connection_error">Error de conexión</string>
   <string name="download_error_unknown_host">Host desconocido</string>
   <string name="cancel_all_downloads_label">Cancelar todas las descargas</string>
-  <string name="download_cancelled_msg">Descarga cancelada</string>
+  <string name="download_canceled_msg">Descarga cancelada</string>
   <string name="download_report_title">Descargas completadas</string>
   <string name="download_error_malformed_url">URL malformada</string>
   <string name="download_error_io_error">Error de E/S</string>
@@ -121,12 +119,9 @@
   <string name="other_pref">Otros</string>
   <string name="about_pref">Acerca de</string>
   <string name="queue_label">Cola</string>
-  <string name="pref_pauseOnHeadsetDisconnect_sum">Pausar la reproducción al desconectar los auriculares</string>
   <string name="pref_followQueue_sum">Saltar al siguiente elemento de la cola al acabar la reproducción</string>
   <string name="playback_pref">Reproducción</string>
   <string name="network_pref">Red</string>
-  <string name="pref_autoUpdateIntervall_title">Intervalo de actualización</string>
-  <string name="pref_autoUpdateIntervall_sum">Especificar el intervalo en que se actualizarán automáticamente los canales, o desactivarlo</string>
   <string name="pref_downloadMediaOnWifiOnly_sum">Solo descargar los contenidos por WiFi</string>
   <string name="pref_followQueue_title">Reproducción continua</string>
   <string name="pref_downloadMediaOnWifiOnly_title">Descarga de contenidos por WiFi</string>
@@ -193,5 +188,7 @@
   <!--Online feed view-->
   <!--Content descriptions for image buttons-->
   <!--Feed information screen-->
+  <!--Progress information-->
   <!--AntennaPodSP-->
+  <!--Rating dialog-->
 </resources>

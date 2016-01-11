@@ -5,7 +5,6 @@
   <string name="feeds_label">Kanały</string>
   <string name="add_feed_label">Dodaj podcast</string>
   <string name="podcasts_label">PODCASTY</string>
-  <string name="episodes_label">ODCINKI</string>
   <string name="new_episodes_label">Nowe odcinki</string>
   <string name="all_episodes_label">Wszystkie odcinki</string>
   <string name="new_label">Nowy</string>
@@ -71,7 +70,6 @@
   <string name="show_info_label">Pokaż informacje</string>
   <string name="remove_feed_label">Usuń podcast</string>
   <string name="share_link_label">Udostępnij stronę</string>
-  <string name="share_source_label">Udostępnij kanał</string>
   <string name="feed_delete_confirmation_msg">Potwierdź chęć usunięcia tego kanału wraz ze WSZYSTKIMI odcinkami, które zostały pobrane.</string>
   <string name="feed_remover_msg">Usuwanie kanału</string>
   <string name="load_complete_feed">Odśwież cały kanał</string>
@@ -108,7 +106,7 @@
   <string name="download_error_unknown_host">Nieznany host</string>
   <string name="download_error_unauthorized">Błąd autoryzacji</string>
   <string name="cancel_all_downloads_label">Anuluj wszystkie pobierania</string>
-  <string name="download_cancelled_msg">Pobieranie anulowane</string>
+  <string name="download_canceled_msg">Pobieranie anulowane</string>
   <string name="download_report_title">Pobieranie ukończone</string>
   <string name="download_error_malformed_url">Niepoprawny adres</string>
   <string name="download_error_io_error">Błąd wejścia/wyjścia</string>
@@ -179,7 +177,6 @@
   <!--Variable Speed-->
   <string name="download_plugin_label">Pobierz wtyczkę</string>
   <string name="no_playback_plugin_title">Wtyczka nie zainstalowana</string>
-  <string name="no_playback_plugin_msg">Aby odtwarzać ze zmienną prędkością niezbędna jest instalacja biblioteki innej firmy.\n\nDotknij \'Pobierz wtyczkę\' aby pobrać darmową wtyczkę z Play Store\n\nAntennaPod nie odpowiada za problemy wynikłe z używania tej wtyczki, które powinny zostać zgłoszone bezpośrednio autorowi wtyczki.</string>
   <string name="set_playback_speed_label">Prędkość odtwarzania</string>
   <!--Empty list labels-->
   <string name="no_items_label">Brak elementów na tej liście.</string>
@@ -190,15 +187,12 @@
   <string name="queue_label">Kolejka</string>
   <string name="services_label">Usługi</string>
   <string name="flattr_label">Flattr</string>
-  <string name="pref_pauseOnHeadsetDisconnect_sum">Wstrzymaj odtwarzanie kiedy słuchawki zostaną odłączone</string>
   <string name="pref_unpauseOnHeadsetReconnect_sum">Wznów odtwarzanie kiedy słuchawki zostaną podłączone ponownie</string>
   <string name="pref_followQueue_sum">Przeskocz do następnego elementu kolejki po zakończeniu odtwarzania</string>
   <string name="pref_auto_delete_sum">Usuń odcinek kiedy jego odtwarzanie zostanie zakończone</string>
   <string name="pref_auto_delete_title">Automatyczne usuwanie</string>
   <string name="playback_pref">Odtwarzanie</string>
   <string name="network_pref">Sieć</string>
-  <string name="pref_autoUpdateIntervall_title">Częstość aktualizacji</string>
-  <string name="pref_autoUpdateIntervall_sum">Określ częstotliwość automatycznego odświeżania lub je wyłącz</string>
   <string name="pref_downloadMediaOnWifiOnly_sum">Pobieraj pliki tylko przez WiFi</string>
   <string name="pref_followQueue_title">Odtwarzanie ciągłe</string>
   <string name="pref_downloadMediaOnWifiOnly_title">WiFi media pobrane</string>
@@ -238,8 +232,6 @@
   <string name="pref_gpodnet_setlogin_information_sum">Zmień dane logowania konta gpodder.net.</string>
   <string name="pref_playback_speed_title">Prędkość odtwarzania</string>
   <string name="pref_playback_speed_sum">Dostosuj prędkości dostępne dla odtwarzania audio o zmiennej prędkości</string>
-  <string name="pref_seek_delta_title">Seek time</string>
-  <string name="pref_seek_delta_sum">Przeskocz o tyle sekund przewijając</string>
   <string name="pref_gpodnet_sethostname_title">Ustaw nazwę hosta</string>
   <string name="pref_gpodnet_sethostname_use_default_host">Użyj domyślnego hosta</string>
   <string name="pref_expandNotify_title">Rozwiń Powiadomienia</string>
@@ -281,9 +273,6 @@
   <string name="sleep_timer_label">Wyłącznik czasowy</string>
   <string name="time_left_label">Pozostały czas:\u0020</string>
   <string name="time_dialog_invalid_input">Błąd wpisu, czas musi być liczbą całkowitą</string>
-  <string name="time_unit_seconds">sekundy</string>
-  <string name="time_unit_minutes">minuty</string>
-  <string name="time_unit_hours">godziny</string>
   <!--gpodder.net-->
   <string name="gpodnet_taglist_header">KATEGORIE</string>
   <string name="gpodnet_toplist_header">TOP PODCASTY</string>
@@ -353,6 +342,8 @@ https://gpodder.net/register/</string>
   <!--Feed information screen-->
   <string name="authentication_label">Autoryzacja</string>
   <string name="authentication_descr">Zmień swoją nazwę użytkownika oraz hasło dla tego podcastu i jego odcinków</string>
+  <!--Progress information-->
   <!--AntennaPodSP-->
   <string name="sp_apps_importing_feeds_msg">Importowanie subskrybcji z jednozadaniowych aplikacji</string>
+  <!--Rating dialog-->
 </resources>

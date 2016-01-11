@@ -7,9 +7,17 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.ViewGroup;
-import android.widget.*;
+import android.widget.Adapter;
+import android.widget.BaseAdapter;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+
+import com.nineoldandroids.view.ViewHelper;
+
 import de.danoeh.antennapod.R;
-import de.danoeh.antennapod.core.feed.EventDistributor;
 import de.danoeh.antennapod.core.feed.FeedItem;
 import de.danoeh.antennapod.core.feed.FeedMedia;
 import de.danoeh.antennapod.core.feed.MediaType;
@@ -26,13 +34,20 @@ public class FeedItemlistAdapter extends BaseAdapter {
     private final Context context;
     private boolean showFeedtitle;
     private int selectedItemIndex;
+    /** true if played items should be made partially transparent */
+    private boolean makePlayedItemsTransparent;
     private final ActionButtonUtils actionButtonUtils;
 
     public static final int SELECTION_NONE = -1;
 
+    private final int playingBackGroundColor;
+    private final int normalBackGroundColor;
+
     public FeedItemlistAdapter(Context context,
                                ItemAccess itemAccess,
-                               ActionButtonCallback callback, boolean showFeedtitle) {
+                               ActionButtonCallback callback,
+                               boolean showFeedtitle,
+                               boolean makePlayedItemsTransparent) {
         super();
         this.callback = callback;
         this.context = context;
@@ -40,6 +55,10 @@ public class FeedItemlistAdapter extends BaseAdapter {
         this.showFeedtitle = showFeedtitle;
         this.selectedItemIndex = SELECTION_NONE;
         this.actionButtonUtils = new ActionButtonUtils(context);
+        this.makePlayedItemsTransparent = makePlayedItemsTransparent;
+
+        playingBackGroundColor = context.getResources().getColor(R.color.highlight_light);
+        normalBackGroundColor = context.getResources().getColor(android.R.color.transparent);
     }
 
     @Override
@@ -68,6 +87,8 @@ public class FeedItemlistAdapter extends BaseAdapter {
             LayoutInflater inflater = (LayoutInflater) context
                     .getSystemService(Context.LAYOUT_INFLATER_SERVICE);
             convertView = inflater.inflate(R.layout.feeditemlist_item, parent, false);
+            holder.container = (LinearLayout) convertView
+                    .findViewById(R.id.container);
             holder.title = (TextView) convertView
                     .findViewById(R.id.txtvItemname);
             holder.lenSize = (TextView) convertView
@@ -79,7 +100,7 @@ public class FeedItemlistAdapter extends BaseAdapter {
             holder.inPlaylist = (ImageView) convertView
                     .findViewById(R.id.imgvInPlaylist);
             holder.type = (ImageView) convertView.findViewById(R.id.imgvType);
-            holder.statusUnread = (View) convertView
+            holder.statusUnread = convertView
                     .findViewById(R.id.statusUnread);
             holder.episodeProgress = (ProgressBar) convertView
                     .findViewById(R.id.pbar_episode_progress);
@@ -88,6 +109,7 @@ public class FeedItemlistAdapter extends BaseAdapter {
         } else {
             holder = (Holder) convertView.getTag();
         }
+
         if (!(getItemViewType(position) == Adapter.IGNORE_ITEM_VIEW_TYPE)) {
             convertView.setVisibility(View.VISIBLE);
             if (position == selectedItemIndex) {
@@ -99,28 +121,21 @@ public class FeedItemlistAdapter extends BaseAdapter {
 
             StringBuilder buffer = new StringBuilder(item.getTitle());
             if (showFeedtitle) {
-                buffer.append("(");
+                buffer.append(" (");
                 buffer.append(item.getFeed().getTitle());
                 buffer.append(")");
             }
             holder.title.setText(buffer.toString());
 
-            FeedItem.State state = item.getState();
-            switch (state) {
-                case PLAYING:
-                    holder.statusUnread.setVisibility(View.INVISIBLE);
-                    holder.episodeProgress.setVisibility(View.VISIBLE);
-                    break;
-                case IN_PROGRESS:
-                    holder.statusUnread.setVisibility(View.INVISIBLE);
-                    holder.episodeProgress.setVisibility(View.VISIBLE);
-                    break;
-                case NEW:
-                    holder.statusUnread.setVisibility(View.VISIBLE);
-                    break;
-                default:
-                    holder.statusUnread.setVisibility(View.INVISIBLE);
-                    break;
+            if(item.isNew()) {
+                holder.statusUnread.setVisibility(View.VISIBLE);
+            } else {
+                holder.statusUnread.setVisibility(View.INVISIBLE);
+            }
+            if(item.isPlayed() && makePlayedItemsTransparent) {
+                ViewHelper.setAlpha(convertView, 0.5f);
+            } else {
+                ViewHelper.setAlpha(convertView, 1.0f);
             }
 
             holder.published.setText(DateUtils.formatDateTime(context, item.getPubDate().getTime(), DateUtils.FORMAT_ABBREV_ALL));
@@ -134,22 +149,21 @@ public class FeedItemlistAdapter extends BaseAdapter {
                 holder.lenSize.setVisibility(View.INVISIBLE);
             } else {
 
-                AdapterUtils.updateEpisodePlaybackProgress(item, context.getResources(), holder.lenSize, holder.episodeProgress);
+                AdapterUtils.updateEpisodePlaybackProgress(item, holder.lenSize, holder.episodeProgress);
 
-                if (((ItemAccess) itemAccess).isInQueue(item)) {
+                if (itemAccess.isInQueue(item)) {
                     holder.inPlaylist.setVisibility(View.VISIBLE);
                 } else {
                     holder.inPlaylist.setVisibility(View.INVISIBLE);
                 }
 
-                if (DownloadRequester.getInstance().isDownloadingFile(
-                        item.getMedia())) {
+                if (DownloadRequester.getInstance().isDownloadingFile(item.getMedia())) {
                     holder.episodeProgress.setVisibility(View.VISIBLE);
-                    holder.episodeProgress.setProgress(((ItemAccess) itemAccess).getItemDownloadProgressPercent(item));
-                    holder.published.setVisibility(View.GONE);
+                    holder.episodeProgress.setProgress(itemAccess.getItemDownloadProgressPercent(item));
                 } else {
-                    holder.episodeProgress.setVisibility(View.GONE);
-                    holder.published.setVisibility(View.VISIBLE);
+                    if(media.getPosition() == 0) {
+                        holder.episodeProgress.setVisibility(View.GONE);
+                    }
                 }
 
                 TypedArray typeDrawables = context.obtainStyledAttributes(
@@ -169,9 +183,18 @@ public class FeedItemlistAdapter extends BaseAdapter {
                     holder.type.setImageBitmap(null);
                     holder.type.setVisibility(View.GONE);
                 }
+
+                if(media.isCurrentlyPlaying()) {
+                    if(media.isCurrentlyPlaying()) {
+                        holder.container.setBackgroundColor(playingBackGroundColor);
+                    } else {
+                        holder.container.setBackgroundColor(normalBackGroundColor);
+                    }
+                }
             }
 
-            actionButtonUtils.configureActionButton(holder.butAction, item);
+            boolean isInQueue = itemAccess.isInQueue(item);
+            actionButtonUtils.configureActionButton(holder.butAction, item, isInQueue);
             holder.butAction.setFocusable(false);
             holder.butAction.setTag(item);
             holder.butAction.setOnClickListener(butActionListener);
@@ -180,7 +203,6 @@ public class FeedItemlistAdapter extends BaseAdapter {
             convertView.setVisibility(View.GONE);
         }
         return convertView;
-
     }
 
     private final OnClickListener butActionListener = new OnClickListener() {
@@ -192,6 +214,7 @@ public class FeedItemlistAdapter extends BaseAdapter {
     };
 
     static class Holder {
+        LinearLayout container;
         TextView title;
         TextView published;
         TextView lenSize;
@@ -202,23 +225,16 @@ public class FeedItemlistAdapter extends BaseAdapter {
         ProgressBar episodeProgress;
     }
 
-    public int getSelectedItemIndex() {
-        return selectedItemIndex;
-    }
+    public interface ItemAccess {
 
-    public void setSelectedItemIndex(int selectedItemIndex) {
-        this.selectedItemIndex = selectedItemIndex;
-        notifyDataSetChanged();
-    }
-
-    public static interface ItemAccess {
-        public boolean isInQueue(FeedItem item);
+        boolean isInQueue(FeedItem item);
 
         int getItemDownloadProgressPercent(FeedItem item);
 
         int getCount();
 
         FeedItem getItem(int position);
+
     }
 
 }

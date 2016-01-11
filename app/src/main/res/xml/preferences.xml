@@ -2,13 +2,36 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
 
     <PreferenceCategory android:title="@string/user_interface_label">
-        <ListPreference
+        <com.afollestad.materialdialogs.prefs.MaterialListPreference
             android:entryValues="@array/theme_values"
             android:entries="@array/theme_options"
             android:title="@string/pref_set_theme_title"
             android:key="prefTheme"
             android:summary="@string/pref_set_theme_sum"
             android:defaultValue="0"/>
+        <PreferenceScreen
+            android:key="prefDrawerSettings"
+            android:summary="@string/pref_nav_drawer_sum"
+            android:title="@string/pref_nav_drawer_title">
+            <Preference
+                android:key="prefHiddenDrawerItems"
+                android:summary="@string/pref_nav_drawer_items_sum"
+                android:title="@string/pref_nav_drawer_items_title" />
+            <com.afollestad.materialdialogs.prefs.MaterialListPreference
+                android:entryValues="@array/nav_drawer_feed_order_values"
+                android:entries="@array/nav_drawer_feed_order_options"
+                android:title="@string/pref_nav_drawer_feed_order_title"
+                android:key="prefDrawerFeedOrder"
+                android:summary="@string/pref_nav_drawer_feed_order_sum"
+                android:defaultValue="0"/>
+            <com.afollestad.materialdialogs.prefs.MaterialListPreference
+                android:entryValues="@array/nav_drawer_feed_counter_values"
+                android:entries="@array/nav_drawer_feed_counter_options"
+                android:title="@string/pref_nav_drawer_feed_counter_title"
+                android:key="prefDrawerFeedIndicator"
+                android:summary="@string/pref_nav_drawer_feed_counter_sum"
+                android:defaultValue="0"/>
+        </PreferenceScreen>
         <CheckBoxPreference
             android:defaultValue="false"
             android:enabled="true"
@@ -16,11 +39,23 @@
             android:summary="@string/pref_expandNotify_sum"
             android:title="@string/pref_expandNotify_title"/>
         <CheckBoxPreference
-            android:defaultValue="false"
+            android:defaultValue="true"
             android:enabled="true"
             android:key="prefPersistNotify"
             android:summary="@string/pref_persistNotify_sum"
             android:title="@string/pref_persistNotify_title"/>
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:enabled="true"
+            android:key="prefLockscreenBackground"
+            android:summary="@string/pref_lockscreen_background_sum"
+            android:title="@string/pref_lockscreen_background_title"/>
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:enabled="true"
+            android:key="prefShowDownloadReport"
+            android:summary="@string/pref_showDownloadReport_sum"
+            android:title="@string/pref_showDownloadReport_title"/>
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/queue_label">
@@ -38,7 +73,7 @@
             android:defaultValue="true"
             android:enabled="true"
             android:key="prefPauseOnHeadsetDisconnect"
-            android:summary="@string/pref_pauseOnHeadsetDisconnect_sum"
+            android:summary="@string/pref_pauseOnDisconnect_sum"
             android:title="@string/pref_pauseOnHeadsetDisconnect_title"/>
         <CheckBoxPreference
             android:defaultValue="true"
@@ -50,15 +85,41 @@
         <CheckBoxPreference
             android:defaultValue="false"
             android:enabled="true"
+            android:dependency="prefPauseOnHeadsetDisconnect"
+            android:key="prefUnpauseOnBluetoothReconnect"
+            android:summary="@string/pref_unpauseOnBluetoothReconnect_sum"
+            android:title="@string/pref_unpauseOnBluetoothReconnect_title"/>
+        <CheckBoxPreference
+            android:defaultValue="false"
+            android:enabled="true"
+            android:key="prefHardwareForwardButtonSkips"
+            android:summary="@string/pref_hardwareForwardButtonSkips_sum"
+            android:title="@string/pref_hardwareForwardButtonSkips_title"/>
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:enabled="true"
             android:key="prefFollowQueue"
             android:summary="@string/pref_followQueue_sum"
             android:title="@string/pref_followQueue_title"/>
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:enabled="true"
+            android:key="prefSkipKeepsEpisode"
+            android:summary="@string/pref_skip_keeps_episodes_sum"
+            android:title="@string/pref_skip_keeps_episodes_title"/>
         <CheckBoxPreference
             android:defaultValue="false"
             android:enabled="true"
             android:key="prefAutoDelete"
             android:summary="@string/pref_auto_delete_sum"
             android:title="@string/pref_auto_delete_title"/>
+        <com.afollestad.materialdialogs.prefs.MaterialListPreference
+            android:defaultValue="30"
+            android:entries="@array/smart_mark_as_played_values"
+            android:entryValues="@array/smart_mark_as_played_values"
+            android:key="prefSmartMarkAsPlayedSecs"
+            android:summary="@string/pref_smart_mark_as_played_sum"
+            android:title="@string/pref_smart_mark_as_played_title"/>
         <Preference
             android:key="prefPlaybackSpeedLauncher"
             android:summary="@string/pref_playback_speed_sum"
@@ -70,36 +131,40 @@
             android:key="prefPauseForFocusLoss"
             android:summary="@string/pref_pausePlaybackForFocusLoss_sum"
             android:title="@string/pref_pausePlaybackForFocusLoss_title" />
-
-        <ListPreference
-            android:defaultValue="30"
-            android:entries="@array/seek_delta_values"
-            android:entryValues="@array/seek_delta_values"
-            android:key="prefSeekDeltaSecs"
-            android:summary="@string/pref_seek_delta_sum"
-            android:title="@string/pref_seek_delta_title" />
+        <CheckBoxPreference
+            android:defaultValue="true"
+            android:enabled="true"
+            android:key="prefResumeAfterCall"
+            android:summary="@string/pref_resumeAfterCall_sum"
+            android:title="@string/pref_resumeAfterCall_title"/>
 
     </PreferenceCategory>
     <PreferenceCategory android:title="@string/network_pref">
-        <ListPreference
-            android:defaultValue="0"
-            android:entries="@array/update_intervall_values"
-            android:entryValues="@array/update_intervall_values"
+        <Preference
             android:key="prefAutoUpdateIntervall"
-            android:summary="@string/pref_autoUpdateIntervall_sum"
-            android:title="@string/pref_autoUpdateIntervall_title"/>
+            android:summary="@string/pref_autoUpdateIntervallOrTime_sum"
+            android:title="@string/pref_autoUpdateIntervallOrTime_title"/>
         <CheckBoxPreference
             android:defaultValue="false"
             android:enabled="true"
             android:key="prefMobileUpdate"
             android:summary="@string/pref_mobileUpdate_sum"
             android:title="@string/pref_mobileUpdate_title"/>
-        <de.danoeh.antennapod.preferences.CustomEditTextPreference
-            android:defaultValue="6"
+
+        <com.afollestad.materialdialogs.prefs.MaterialListPreference
+            android:defaultValue="-1"
+            android:entries="@array/episode_cleanup_entries"
+            android:key="prefEpisodeCleanup"
+            android:title="@string/pref_episode_cleanup_title"
+            android:summary="@string/pref_episode_cleanup_summary"
+            android:entryValues="@array/episode_cleanup_values"/>
+
+        <com.afollestad.materialdialogs.prefs.MaterialEditTextPreference
+            android:defaultValue="4"
             android:inputType="number"
             android:key="prefParallelDownloads"
             android:title="@string/pref_parallel_downloads_title"/>
-        <ListPreference
+        <com.afollestad.materialdialogs.prefs.MaterialListPreference
             android:defaultValue="20"
             android:entries="@array/episode_cache_size_entries"
             android:key="prefEpisodeCacheSize"
@@ -173,19 +238,32 @@
         <Preference
             android:title="@string/choose_data_directory"
             android:key="prefChooseDataDir"/>
-        <Preference
-            android:key="prefFlattrThisApp"
-            android:summary="@string/pref_flattr_this_app_sum"
-            android:title="@string/pref_flattr_this_app_title">
-        </Preference>
+        <ListPreference
+            android:entryValues="@array/image_cache_size_values"
+            android:entries="@array/image_cache_size_options"
+            android:title="@string/pref_image_cache_size_title"
+            android:key="prefImageCacheSize"
+            android:summary="@string/pref_image_cache_size_sum"
+            android:defaultValue="100"/>
         <Preference
             android:key="prefOpmlExport"
             android:title="@string/opml_export_label"/>
         <Preference
             android:key="prefAbout"
             android:title="@string/about_pref"/>
+        <Preference
+            android:key="prefSendCrashReport"
+            android:title="@string/crash_report_title"
+            android:summary="@string/crash_report_sum"/>
+    </PreferenceCategory>
 
-
+    <PreferenceCategory android:title="@string/experimental_pref">
+    <CheckBoxPreference
+        android:defaultValue="false"
+        android:enabled="false"
+        android:key="prefSonic"
+        android:summary="@string/pref_sonic_message"
+        android:title="@string/pref_sonic_title"/>
     </PreferenceCategory>
 
 </PreferenceScreen>

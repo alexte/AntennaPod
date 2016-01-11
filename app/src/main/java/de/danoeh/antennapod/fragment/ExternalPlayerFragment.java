@@ -11,10 +11,11 @@ import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 
-import com.squareup.picasso.Picasso;
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
 
-import de.danoeh.antennapod.BuildConfig;
 import de.danoeh.antennapod.R;
+import de.danoeh.antennapod.core.glide.ApGlideSettings;
 import de.danoeh.antennapod.core.service.playback.PlaybackService;
 import de.danoeh.antennapod.core.util.Converter;
 import de.danoeh.antennapod.core.util.playback.Playable;
@@ -25,7 +26,7 @@ import de.danoeh.antennapod.core.util.playback.PlaybackController;
  * if the PlaybackService is running
  */
 public class ExternalPlayerFragment extends Fragment {
-    private static final String TAG = "ExternalPlayerFragment";
+    public static final String TAG = "ExternalPlayerFragment";
 
     private ViewGroup fragmentLayout;
     private ImageView imgvCover;
@@ -54,10 +55,9 @@ public class ExternalPlayerFragment extends Fragment {
 
             @Override
             public void onClick(View v) {
-                if (BuildConfig.DEBUG)
-                    Log.d(TAG, "layoutInfo was clicked");
+                Log.d(TAG, "layoutInfo was clicked");
 
-                if (controller.getMedia() != null) {
+                if (controller != null && controller.getMedia() != null) {
                     startActivity(PlaybackService.getPlayerActivityIntent(
                             getActivity(), controller.getMedia()));
                 }
@@ -90,14 +90,10 @@ public class ExternalPlayerFragment extends Fragment {
 
             @Override
             public void onBufferStart() {
-                // TODO Auto-generated method stub
-
             }
 
             @Override
             public void onBufferEnd() {
-                // TODO Auto-generated method stub
-
             }
 
             @Override
@@ -145,33 +141,16 @@ public class ExternalPlayerFragment extends Fragment {
 
             @Override
             public void onShutdownNotification() {
-                if (fragmentLayout != null) {
-                    fragmentLayout.setVisibility(View.GONE);
-                }
-                controller = setupPlaybackController();
-                if (butPlay != null) {
-                    butPlay.setOnClickListener(controller
-                            .newOnPlayButtonClickListener());
-                }
-
+                playbackDone();
             }
 
             @Override
             public void onPlaybackEnd() {
-                if (fragmentLayout != null) {
-                    fragmentLayout.setVisibility(View.GONE);
-                }
-                controller = setupPlaybackController();
-                if (butPlay != null) {
-                    butPlay.setOnClickListener(controller
-                            .newOnPlayButtonClickListener());
-                }
+                playbackDone();
             }
 
             @Override
             public void onPlaybackSpeedChange() {
-                // TODO Auto-generated method stub
-
             }
         };
     }
@@ -185,8 +164,7 @@ public class ExternalPlayerFragment extends Fragment {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        if (BuildConfig.DEBUG)
-            Log.d(TAG, "Fragment is about to be destroyed");
+        Log.d(TAG, "Fragment is about to be destroyed");
         if (controller != null) {
             controller.release();
         }
@@ -200,17 +178,35 @@ public class ExternalPlayerFragment extends Fragment {
         }
     }
 
+    private void playbackDone() {
+        if (fragmentLayout != null) {
+            fragmentLayout.setVisibility(View.GONE);
+        }
+        if (controller != null) {
+            controller.release();
+        }
+        controller = setupPlaybackController();
+        if (butPlay != null) {
+            butPlay.setOnClickListener(controller
+                    .newOnPlayButtonClickListener());
+        }
+        controller.init();
+    }
+
     private boolean loadMediaInfo() {
-        if (BuildConfig.DEBUG)
-            Log.d(TAG, "Loading media info");
-        if (controller.serviceAvailable()) {
+        Log.d(TAG, "Loading media info");
+        if (controller != null && controller.serviceAvailable()) {
             Playable media = controller.getMedia();
             if (media != null) {
                 txtvTitle.setText(media.getEpisodeTitle());
 
-                Picasso.with(getActivity())
+                Glide.with(getActivity())
                         .load(media.getImageUri())
-                        .fit()
+                        .placeholder(R.color.light_gray)
+                        .error(R.color.light_gray)
+                        .diskCacheStrategy(ApGlideSettings.AP_DISK_CACHE_STRATEGY)
+                        .fitCenter()
+                        .dontAnimate()
                         .into(imgvCover);
 
                 fragmentLayout.setVisibility(View.VISIBLE);
@@ -221,13 +217,11 @@ public class ExternalPlayerFragment extends Fragment {
                 }
                 return true;
             } else {
-                Log.w(TAG,
-                        "loadMediaInfo was called while the media object of playbackService was null!");
+                Log.w(TAG,  "loadMediaInfo was called while the media object of playbackService was null!");
                 return false;
             }
         } else {
-            Log.w(TAG,
-                    "loadMediaInfo was called while playbackService was null!");
+            Log.w(TAG, "loadMediaInfo was called while playbackService was null!");
             return false;
         }
     }
@@ -235,5 +229,9 @@ public class ExternalPlayerFragment extends Fragment {
     private String getPositionString(int position, int duration) {
         return Converter.getDurationStringLong(position) + " / "
                 + Converter.getDurationStringLong(duration);
+    }
+
+    public PlaybackController getPlaybackControllerTestingOnly() {
+        return controller;
     }
 }

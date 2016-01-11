@@ -1,14 +1,20 @@
 package de.danoeh.antennapod.core.feed;
 
+import android.database.Cursor;
 import android.net.Uri;
 
+import org.apache.commons.lang3.builder.ToStringBuilder;
+import org.apache.commons.lang3.builder.ToStringStyle;
+
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 
-import de.danoeh.antennapod.core.ClientConfig;
-import de.danoeh.antennapod.core.asynctask.PicassoImageResource;
+import de.danoeh.antennapod.core.asynctask.ImageResource;
 import de.danoeh.antennapod.core.storage.DBReader;
+import de.danoeh.antennapod.core.storage.PodDBAdapter;
 import de.danoeh.antennapod.core.util.ShownotesProvider;
 import de.danoeh.antennapod.core.util.flattr.FlattrStatus;
 import de.danoeh.antennapod.core.util.flattr.FlattrThing;
@@ -18,7 +24,12 @@ import de.danoeh.antennapod.core.util.flattr.FlattrThing;
  *
  * @author daniel
  */
-public class FeedItem extends FeedComponent implements ShownotesProvider, FlattrThing, PicassoImageResource {
+public class FeedItem extends FeedComponent implements ShownotesProvider, FlattrThing, ImageResource {
+
+    /** tag that indicates this item is in the queue */
+    public static final String TAG_QUEUE = "Queue";
+    /** tag that indicates this item is in favorites */
+    public static final String TAG_FAVORITE = "Favorite";
 
     /**
      * The id/guid that can be found in the rss/atom feed. Might not be set.
@@ -41,7 +52,11 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
     private Feed feed;
     private long feedId;
 
-    private boolean read;
+    private int state;
+    public final static int NEW = -1;
+    public final static int UNPLAYED = 0;
+    public final static int PLAYED = 1;
+
     private String paymentLink;
     private FlattrStatus flattrStatus;
 
@@ -60,8 +75,15 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
     private List<Chapter> chapters;
     private FeedImage image;
 
+    private boolean autoDownload = true;
+
+    /**
+     * Any tags assigned to this item
+     */
+    private Set<String> tags = new HashSet<>();
+
     public FeedItem() {
-        this.read = true;
+        this.state = UNPLAYED;
         this.flattrStatus = new FlattrStatus();
         this.hasChapters = false;
     }
@@ -70,8 +92,8 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
      * This constructor is used by DBReader.
      * */
     public FeedItem(long id, String title, String link, Date pubDate, String paymentLink, long feedId,
-                    FlattrStatus flattrStatus, boolean hasChapters, FeedImage image, boolean read,
-                    String itemIdentifier) {
+                    FlattrStatus flattrStatus, boolean hasChapters, FeedImage image, int state,
+                    String itemIdentifier, boolean autoDownload) {
         this.id = id;
         this.title = title;
         this.link = link;
@@ -81,20 +103,21 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
         this.flattrStatus = flattrStatus;
         this.hasChapters = hasChapters;
         this.image = image;
-        this.read = read;
+        this.state = state;
         this.itemIdentifier = itemIdentifier;
+        this.autoDownload = autoDownload;
     }
 
     /**
      * This constructor should be used for creating test objects.
      */
-    public FeedItem(long id, String title, String itemIdentifier, String link, Date pubDate, boolean read, Feed feed) {
+    public FeedItem(long id, String title, String itemIdentifier, String link, Date pubDate, int state, Feed feed) {
         this.id = id;
         this.title = title;
         this.itemIdentifier = itemIdentifier;
         this.link = link;
         this.pubDate = (pubDate != null) ? (Date) pubDate.clone() : null;
-        this.read = read;
+        this.state = state;
         this.feed = feed;
         this.flattrStatus = new FlattrStatus();
         this.hasChapters = false;
@@ -103,16 +126,47 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
     /**
      * This constructor should be used for creating test objects involving chapter marks.
      */
-    public FeedItem(long id, String title, String itemIdentifier, String link, Date pubDate, boolean read, Feed feed, boolean hasChapters) {
+    public FeedItem(long id, String title, String itemIdentifier, String link, Date pubDate, int state, Feed feed, boolean hasChapters) {
         this.id = id;
         this.title = title;
         this.itemIdentifier = itemIdentifier;
         this.link = link;
         this.pubDate = (pubDate != null) ? (Date) pubDate.clone() : null;
-        this.read = read;
+        this.state = state;
         this.feed = feed;
         this.flattrStatus = new FlattrStatus();
         this.hasChapters = hasChapters;
+    }
+
+    public static FeedItem fromCursor(Cursor cursor) {
+        int indexId = cursor.getColumnIndex(PodDBAdapter.KEY_ID);
+        int indexTitle = cursor.getColumnIndex(PodDBAdapter.KEY_TITLE);
+        int indexLink = cursor.getColumnIndex(PodDBAdapter.KEY_LINK);
+        int indexPubDate = cursor.getColumnIndex(PodDBAdapter.KEY_PUBDATE);
+        int indexPaymentLink = cursor.getColumnIndex(PodDBAdapter.KEY_PAYMENT_LINK);
+        int indexFeedId = cursor.getColumnIndex(PodDBAdapter.KEY_FEED);
+        int indexFlattrStatus = cursor.getColumnIndex(PodDBAdapter.KEY_FLATTR_STATUS);
+        int indexHasChapters = cursor.getColumnIndex(PodDBAdapter.KEY_HAS_CHAPTERS);
+        int indexRead = cursor.getColumnIndex(PodDBAdapter.KEY_READ);
+        int indexItemIdentifier = cursor.getColumnIndex(PodDBAdapter.KEY_ITEM_IDENTIFIER);
+        int indexAutoDownload = cursor.getColumnIndex(PodDBAdapter.KEY_AUTO_DOWNLOAD);
+
+        long id = cursor.getInt(indexId);
+        assert(id > 0);
+        String title = cursor.getString(indexTitle);
+        String link = cursor.getString(indexLink);
+        Date pubDate = new Date(cursor.getLong(indexPubDate));
+        String paymentLink = cursor.getString(indexPaymentLink);
+        long feedId = cursor.getLong(indexFeedId);
+        boolean hasChapters = cursor.getInt(indexHasChapters) > 0;
+        FlattrStatus flattrStatus = new FlattrStatus(cursor.getLong(indexFlattrStatus));
+        int state = cursor.getInt(indexRead);
+        String itemIdentifier = cursor.getString(indexItemIdentifier);
+        boolean autoDownload = cursor.getInt(indexAutoDownload) > 0;
+
+        FeedItem item = new FeedItem(id, title, link, pubDate, paymentLink, feedId, flattrStatus,
+                hasChapters, null, state, itemIdentifier, autoDownload);
+        return item;
     }
 
     public void updateFromOther(FeedItem other) {
@@ -232,12 +286,25 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
         this.feed = feed;
     }
 
-    public boolean isRead() {
-        return read || isInProgress();
+    public boolean isNew() {
+        return state == NEW;
     }
 
-    public void setRead(boolean read) {
-        this.read = read;
+
+    public void setNew() {
+        state = NEW;
+    }
+
+    public boolean isPlayed() {
+        return state == PLAYED;
+    }
+
+    public void setPlayed(boolean played) {
+        if(played) {
+            state = PLAYED;
+        } else {
+            state = UNPLAYED;
+        }
     }
 
     private boolean isInProgress() {
@@ -251,11 +318,7 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
     public void setContentEncoded(String contentEncoded) {
         this.contentEncoded = contentEncoded;
     }
-
-    public void setFlattrStatus(FlattrStatus status) {
-        this.flattrStatus = status;
-    }
-
+    
     public FlattrStatus getFlattrStatus() {
         return flattrStatus;
     }
@@ -302,7 +365,7 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
             public String call() throws Exception {
 
                 if (contentEncoded == null || description == null) {
-                    DBReader.loadExtraInformationOfFeedItem(ClientConfig.applicationCallbacks.getApplicationInstance(), FeedItem.this);
+                    DBReader.loadExtraInformationOfFeedItem(FeedItem.this);
 
                 }
                 return (contentEncoded != null) ? contentEncoded : description;
@@ -312,10 +375,10 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
 
     @Override
     public Uri getImageUri() {
-        if (hasItemImageDownloaded()) {
-           return image.getImageUri();
-        } else if (hasMedia()) {
+        if(media != null && media.hasEmbeddedPicture()) {
             return media.getImageUri();
+        } else if (image != null) {
+           return image.getImageUri();
         } else if (feed != null) {
             return feed.getImageUri();
         } else {
@@ -324,7 +387,7 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
     }
 
     public enum State {
-        NEW, IN_PROGRESS, READ, PLAYING
+        UNREAD, IN_PROGRESS, READ, PLAYING
     }
 
     public State getState() {
@@ -336,7 +399,7 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
                 return State.IN_PROGRESS;
             }
         }
-        return (isRead() ? State.READ : State.NEW);
+        return (isPlayed() ? State.READ : State.UNREAD);
     }
 
     public long getFeedId() {
@@ -383,5 +446,40 @@ public class FeedItem extends FeedComponent implements ShownotesProvider, Flattr
 
     public boolean hasChapters() {
         return hasChapters;
+    }
+
+    public void setAutoDownload(boolean autoDownload) {
+        this.autoDownload = autoDownload;
+    }
+
+    public boolean getAutoDownload() {
+        return this.autoDownload;
+    }
+
+    public boolean isAutoDownloadable() {
+        return this.hasMedia() &&
+                false == this.getMedia().isPlaying() &&
+                false == this.getMedia().isDownloaded() &&
+                this.getAutoDownload();
+    }
+
+    /**
+     * @return true if the item has this tag
+     */
+    public boolean isTagged(String tag) { return tags.contains(tag); }
+
+    /**
+     * @param tag adds this tag to the item. NOTE: does NOT persist to the database
+     */
+    public void addTag(String tag) { tags.add(tag); }
+
+    /**
+     * @param tag the to remove
+     */
+    public void removeTag(String tag) { tags.remove(tag); }
+
+    @Override
+    public String toString() {
+        return ToStringBuilder.reflectionToString(this, ToStringStyle.SHORT_PREFIX_STYLE);
     }
 }
